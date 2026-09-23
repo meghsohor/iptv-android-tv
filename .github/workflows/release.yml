@@ -23,6 +23,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools build-tools;34.0.0"
 
       - name: Build unsigned release APK
         run: ./gradlew assembleRelease
@@ -36,6 +38,10 @@ jobs:
           alias: ${{ secrets.ANDROID_KEY_ALIAS }}
           keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        env:
+          # The action's own default (29.0.3) isn't reliably present on the runner image;
+          # pin to the version we explicitly install above instead.
+          BUILD_TOOLS_VERSION: "34.0.0"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
