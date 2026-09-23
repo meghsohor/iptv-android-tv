@@ -26,6 +26,12 @@ jobs:
         with:
           packages: "platform-tools build-tools;34.0.0"
 
+      - name: Read app version
+        id: version
+        run: |
+          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
+          echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+
       - name: Build unsigned release APK
         run: ./gradlew assembleRelease
 
@@ -43,9 +49,16 @@ jobs:
           # pin to the version we explicitly install above instead.
           BUILD_TOOLS_VERSION: "34.0.0"
 
+      - name: Rename signed APK
+        id: apk
+        run: |
+          DEST="iptv-android-tv-v${{ steps.version.outputs.name }}.apk"
+          cp "${{ steps.sign.outputs.signedReleaseFile }}" "$DEST"
+          echo "path=$DEST" >> "$GITHUB_OUTPUT"
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: v${{ github.run_number }}
-          name: v${{ github.run_number }}
-          files: ${{ steps.sign.outputs.signedReleaseFile }}
+          tag_name: v${{ steps.version.outputs.name }}
+          name: v${{ steps.version.outputs.name }}
+          files: ${{ steps.apk.outputs.path }}
