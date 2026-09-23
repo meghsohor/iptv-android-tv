@@ -2,6 +2,8 @@ name: Release APK
 
 # Fires whenever commits land on main (this is what "merge a PR into main" looks like
 # to Actions — there's no separate "PR merged" event, a merge is just a push to main).
+# The build-and-release job itself only runs if versionName actually increased
+# (see check-version below) — a merge that doesn't bump it is a no-op here.
 on:
   push:
     branches: [main]
@@ -10,7 +12,45 @@ permissions:
   contents: write
 
 jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Compare versionName against the latest release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          CURRENT=$(sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
+          echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
+
+          LATEST_TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || true)
+          LATEST="${LATEST_TAG#v}"
+
+          if [[ -z "$LATEST" ]]; then
+            echo "No existing release found — will build $CURRENT."
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$CURRENT" == "$LATEST" ]]; then
+            echo "versionName ($CURRENT) unchanged since last release ($LATEST) — skipping."
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            HIGHEST=$(printf '%s\n%s\n' "$CURRENT" "$LATEST" | sort -V | tail -1)
+            if [[ "$HIGHEST" == "$CURRENT" ]]; then
+              echo "versionName increased ($LATEST -> $CURRENT) — will build."
+              echo "should_release=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "versionName ($CURRENT) is not newer than latest release ($LATEST) — skipping."
+              echo "should_release=false" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
   build-and-release:
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -25,12 +65,6 @@ jobs:
         uses: android-actions/setup-android@v4
         with:
           packages: "platform-tools build-tools;34.0.0"
-
-      - name: Read app version
-        id: version
-        run: |
-          VERSION_NAME=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts)
-          echo "name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
 
       - name: Build unsigned release APK
         run: ./gradlew assembleRelease
@@ -52,13 +86,13 @@ jobs:
       - name: Rename signed APK
         id: apk
         run: |
-          DEST="iptv-android-tv-v${{ steps.version.outputs.name }}.apk"
+          DEST="iptv-android-tv-v${{ needs.check-version.outputs.version }}.apk"
           cp "${{ steps.sign.outputs.signedReleaseFile }}" "$DEST"
           echo "path=$DEST" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: v${{ steps.version.outputs.name }}
-          name: v${{ steps.version.outputs.name }}
+          tag_name: v${{ needs.check-version.outputs.version }}
+          name: v${{ needs.check-version.outputs.version }}
           files: ${{ steps.apk.outputs.path }}
