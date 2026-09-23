@@ -1,6 +1,13 @@
 # AGENTS.md
 
-Operational notes for any AI agent working in this repo — the stuff that isn't in the README because it's about environment/tooling quirks and hard-won gotchas, not the app itself. Read [`README.md`](README.md) first for what the app does; read [`android-tv-app-feature-list.md`](android-tv-app-feature-list.md) for the full feature spec before touching navigation/data-layer behavior.
+Operational notes for any AI agent working in this repo — the stuff that isn't in the README because it's about environment/tooling quirks and hard-won gotchas, not the app itself. Read [`README.md`](README.md) first for what the app does; read [`android-tv-app-feature-list.md`](android-tv-app-feature-list.md) for the full feature spec before touching navigation/data-layer behavior, including its "Implementation status" section for what's actually built vs still deferred.
+
+## Current status (as of 2026-09-23)
+
+- The app itself: built and verified working end-to-end on the local TV emulator against real iptv-org data. See the spec doc's "Implementation status" for the built-vs-deferred breakdown.
+- **PR #1** (`meghtv-branding-and-ci`) — open, not yet merged. Contains: MeghTV branding, `scripts/build-local-release.sh`, README rewrite, this file, the version bump to `1.1`/versionCode 2, and the release-workflow version-gating logic. Merging it **will** trigger a real `v1.1` release (versionName increased from the currently-published `1.0`) — that's intentional, it's the point of this PR.
+- **PR #2** (`add-pr-check-workflow`) — merged. Added `.github/workflows/ci.yml` (the informational `build` check described below).
+- Next natural step, whenever picking this back up: review and merge PR #1.
 
 ## Dev environment — command-line only, no Android Studio
 
@@ -41,6 +48,7 @@ Physical keyboard/mouse input to the emulator's own window does not work on this
 - **No direct pushes to `main`.** Everything goes through a PR, even solo work.
 - Version bumps (`versionName` + `versionCode` in `app/build.gradle.kts`) belong in the PR that should trigger a release.
 - The release workflow (`.github/workflows/release.yml`) has a `check-version` gate: it only builds+signs+publishes if `versionName` increased since the last published release. A merge that doesn't bump it is a no-op for releases (no rebuild, no republish) — this is intentional, not a bug.
+- `.github/workflows/ci.yml` builds the debug APK on every PR targeting `main` (check name: `build`) — **informational only**, not a hard merge gate. Classic branch protection *and* the newer Rulesets API both refused with "Upgrade to GitHub Pro or make this repository public" — a private repo on a free personal account can't enforce required status checks via GitHub's own merge-blocking. Don't re-attempt this without one of those two things changing; it's a real account-tier wall, not a config mistake.
 
 ## Known gaps (deliberately deferred, not forgotten)
 

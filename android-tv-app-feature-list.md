@@ -246,4 +246,24 @@ You left these to my judgment, so they're settled rather than left open:
 
 ---
 
-Let me know if anything above should change before I start scaffolding the project.
+## Implementation status
+
+This was written before any code existed; the app now exists. Status as of the MeghTV rebrand (PR #1):
+
+**Built and verified working** (on a local Android TV emulator, against real iptv-org data — a refresh pulled 10,986 real channels):
+- Room data layer (channels/categories/countries/stream URLs/bookmarks), CSV/M3U parsers, the full refresh/diff mechanism described above
+- Pinned-4 + single sliding panel navigation (Refresh/Search/Favourites/Categories → Countries → channel lists), matching the back-target rules above
+- Real Media3/ExoPlayer HLS playback with automatic fallback across mirrored stream URLs on error
+- Bookmarking, Favourites ordering, default-launch-into-Favourites-with-autoplay — confirmed persisting across app restarts
+- MeghTV branding (icon, TV banner, app name)
+- Local + CI build/sign/release pipeline (see `AGENTS.md` and `README.md` for how)
+
+**Not yet built** (structurally supported by the data model, not wired into UI):
+- Manual Source-switcher control in the player (data model + auto-fallback both already support multiple sources per channel)
+- Search's live query-as-you-type hasn't been walked through end-to-end on-device
+- Captions toggle
+- Automated tests (none exist yet)
+- `androidx.tv` (tv-foundation/tv-material) is a dependency but unused — the UI is plain Compose Foundation/Material3 with manual focus handling, a time-pressure simplification, not a final decision
+- Paging 3 is a dependency but not wired into any query — "All Channels" (~11k rows) still loads as a plain `Flow<List<ChannelEntity>>`
+
+See `AGENTS.md` for environment/tooling gotchas and exactly where things stand across open PRs.
