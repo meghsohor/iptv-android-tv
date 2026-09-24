@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -33,6 +34,9 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
 
   private val panel = MutableStateFlow<PanelState>(PanelState.CategoriesMenu)
   private val currentChannelId = MutableStateFlow<String?>(null)
+
+  /** Ordered channel ids of the list [currentChannelId] was selected from — see "Channel change (zap)" in the spec. */
+  private val currentPlaybackList = MutableStateFlow<List<String>>(emptyList())
   private val searchQuery = MutableStateFlow("")
   private val refreshing = MutableStateFlow(false)
   private val refreshMessage = MutableStateFlow<String?>(null)
@@ -49,14 +53,6 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
         ChannelListSource.Search ->
           searchQuery.flatMapLatest { q -> if (q.isBlank()) flowOf(emptyList()) else repository.search(q) }
       }
-    }
-
-  private val currentChannel = currentChannelId.flatMapLatest { id -> if (id == null) flowOf(null) else repository.channelById(id) }
-
-  private val currentStreamUrls =
-    currentChannel.flatMapLatest { channel ->
-      if (channel == null) flowOf(emptyList())
-      else repository.streamUrls(channel.id).map { urls -> orderedByPreference(urls.map { it.url }, channel.selectedSourceUrl) }
     }
 
   private val bookmarkedIds = repository.bookmarkedChannels.map { list -> list.map { it.id }.toSet() }
@@ -76,7 +72,22 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
       BrowseState(p, cats, countries, chans, bm)
     }
 
-  private val playerState = combine(currentChannel, currentStreamUrls, ::PlayerState)
+  private val playerState =
+    currentChannelId
+      .flatMapLatest { id ->
+        if (id == null) {
+          flowOf(PlayerState(null, emptyList()))
+        } else {
+          combine(repository.channelById(id), repository.streamUrls(id)) { channel, urls ->
+            if (channel == null) PlayerState(null, emptyList())
+            else PlayerState(channel, orderedByPreference(urls.map { it.url }, channel.selectedSourceUrl))
+          }
+        }
+      }
+      // A refresh can cascade-delete the row for whatever's currently playing (or channel zap can
+      // land on an id a refresh just removed) — keep the last known-good channel/URLs instead of
+      // dropping to the "nothing playing" banner mid-watch; refresh only updates the dataset.
+      .scan(PlayerState(null, emptyList())) { previous, new -> if (new.currentChannel == null) previous else new }
 
   val uiState =
     combine(browseState, playerState, searchQuery, refreshing, refreshMessage) { browse, player, query, isRefreshing, message ->
@@ -99,19 +110,41 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     viewModelScope.launch {
       if (startedInitialSelection) return@launch
       startedInitialSelection = true
-      val bookmarks = repository.bookmarkedChannels.first()
-      if (bookmarks.isNotEmpty()) {
-        panel.value = PanelState.ChannelList(ChannelListSource.Favourites)
-        currentChannelId.value = bookmarks.first().id
-      } else {
-        panel.value = PanelState.ChannelList(ChannelListSource.AllChannels)
-        currentChannelId.value = repository.allChannels.first().firstOrNull()?.id
-      }
+      selectInitialChannel()
+      // Nothing locally yet (first launch) — fetch before the user has to think to hit Refresh.
+      if (currentChannelId.value == null) onRefresh()
+    }
+  }
+
+  private suspend fun selectInitialChannel() {
+    val bookmarks = repository.bookmarkedChannels.first()
+    if (bookmarks.isNotEmpty()) {
+      panel.value = PanelState.ChannelList(ChannelListSource.Favourites)
+      currentChannelId.value = bookmarks.first().id
+      currentPlaybackList.value = bookmarks.map { it.id }
+    } else {
+      val allChannels = repository.allChannels.first()
+      panel.value = PanelState.ChannelList(ChannelListSource.AllChannels)
+      currentChannelId.value = allChannels.firstOrNull()?.id
+      currentPlaybackList.value = allChannels.map { it.id }
     }
   }
 
   fun onSelectChannel(channelId: String) {
     currentChannelId.value = channelId
+    currentPlaybackList.value = uiState.value.listChannels.map { it.id }
+  }
+
+  /** Steps to the next/previous channel within [currentPlaybackList], wrapping at either end. Doesn't touch panel/nav state. */
+  fun onChannelUp() = stepChannel(1)
+
+  fun onChannelDown() = stepChannel(-1)
+
+  private fun stepChannel(delta: Int) {
+    val list = currentPlaybackList.value
+    val index = list.indexOf(currentChannelId.value)
+    if (index == -1) return
+    currentChannelId.value = list[(index + delta).mod(list.size)]
   }
 
   fun onSelectCategoryRow(category: CategoryEntity) {
@@ -165,14 +198,25 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     viewModelScope.launch {
       refreshing.value = true
       refreshMessage.value = null
+      val result = runCatching { repository.refresh() }
       refreshMessage.value =
-        runCatching { repository.refresh() }
-          .fold(
-            onSuccess = { r -> "${r.added} added, ${r.removed} removed" + if (r.bookmarksRemoved > 0) ", ${r.bookmarksRemoved} bookmarks removed" else "" },
-            onFailure = { e -> "Refresh failed: ${e.message}" },
-          )
+        result.fold(
+          onSuccess = { r -> "${r.added} added, ${r.removed} removed" + if (r.bookmarksRemoved > 0) ", ${r.bookmarksRemoved} bookmarks removed" else "" },
+          onFailure = { e -> "Refresh failed: ${e.message}" },
+        )
+      if (result.isSuccess) {
+        // A refresh can remove channels; drop any that were in the zap list so stepping through
+        // it can't land on an id that no longer exists.
+        val validIds = repository.allChannels.first().map { it.id }.toSet()
+        currentPlaybackList.value = currentPlaybackList.value.filter { it in validIds }
+        if (currentChannelId.value == null) selectInitialChannel()
+      }
       refreshing.value = false
     }
+  }
+
+  fun onDismissRefreshMessage() {
+    refreshMessage.value = null
   }
 }
 

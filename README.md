@@ -9,10 +9,8 @@ Android TV app for browsing and watching live TV channels sourced from [iptv-org
 - Bookmarks as the default view on launch, with the most recently bookmarked channel autoplaying immediately
 - Single sliding panel for navigation: pinned Refresh / Search / Favourites / Categories, drilling into Categories → Countries → channel lists
 - Manual "Refresh Channels" pulls the latest channel/category/country data + stream URLs from iptv-org and diffs it against what's stored locally, preserving bookmarks and any manual source picks
-- Channels with multiple mirrored stream URLs fall back automatically on playback failure, with a manual source-switch control in the player
+- Channels with multiple mirrored stream URLs fall back automatically on playback failure
 - Built for both low-end TV hardware and 4K displays (lazy-loaded lists, no bitmap/logo loading, density-independent UI)
-
-See [`android-tv-app-feature-list.md`](android-tv-app-feature-list.md) for the full spec this was built against, and [`famelack-findings.md`](famelack-findings.md) for the original site research that shaped it.
 
 ## Tech stack
 
