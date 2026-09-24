@@ -2,6 +2,7 @@ package dev.meghsohor.iptvtv.ui.player
 
 import android.content.res.ColorStateList
 import android.graphics.drawable.GradientDrawable
+import android.view.MotionEvent
 import android.view.View
 import android.widget.ImageButton
 import androidx.compose.foundation.background
@@ -56,17 +57,22 @@ private val NetworkErrorCodes =
  * URL has failed (including "no internet at all", which surfaces the same way), that's no longer
  * silent — an error overlay with a Retry button takes over.
  *
- * [onInteraction] fires whenever the user taps the video (showing Media3's own controller) — the
- * touch equivalent of a D-pad key, since [PlayerView] swallows touches before they'd otherwise
- * bubble up to an ancestor Compose `clickable`.
+ * [onInteraction] fires on every tap on the video — the touch equivalent of a D-pad key, since
+ * [PlayerView] swallows touches before they'd otherwise bubble up to an ancestor Compose
+ * `clickable`.
  */
 @Composable
 fun VideoPlayer(streamUrls: List<String>, modifier: Modifier = Modifier, onInteraction: () -> Unit = {}) {
   val context = LocalContext.current
   val player = remember { ExoPlayer.Builder(context).build() }
-  var urlIndex by remember(streamUrls) { mutableIntStateOf(0) }
+  // Unkeyed (not `remember(streamUrls)`): the error listener below is installed once, in a
+  // DisposableEffect keyed on `player`, and closes over these state objects at that point. If a
+  // channel switch replaced them with fresh ones, the listener would keep mutating an orphaned
+  // pair nothing reads any more — fallback and the error overlay would silently stop working
+  // after the very first switch. LaunchedEffect(streamUrls) below resets their values instead.
+  var urlIndex by remember { mutableIntStateOf(0) }
   var retryTick by remember(streamUrls) { mutableIntStateOf(0) }
-  var playbackError by remember(streamUrls) { mutableStateOf<PlaybackException?>(null) }
+  var playbackError by remember { mutableStateOf<PlaybackException?>(null) }
   val currentStreamUrls by rememberUpdatedState(streamUrls)
   val currentOnInteraction by rememberUpdatedState(onInteraction)
 
@@ -136,9 +142,14 @@ fun VideoPlayer(streamUrls: List<String>, modifier: Modifier = Modifier, onInter
           findViewById<View>(Media3R.id.exo_controls_background)?.setBackgroundColor(MeghBackground.copy(alpha = 0.55f).toArgb())
           findViewById<View>(Media3R.id.exo_bottom_bar)?.setBackgroundColor(MeghBackground.copy(alpha = 0.9f).toArgb())
 
-          setControllerVisibilityListener(
-            PlayerView.ControllerVisibilityListener { visibility -> if (visibility == View.VISIBLE) currentOnInteraction() }
-          )
+          // Not a ControllerVisibilityListener: that only fires when the controller transitions
+          // TO visible, so a tap that *hides* an already-visible controller — still a real
+          // interaction — would never reset the panel's timer. Watch touches directly instead,
+          // returning false so PlayerView's own show/hide handling still runs normally.
+          setOnTouchListener { _, event ->
+            if (event.actionMasked == MotionEvent.ACTION_DOWN) currentOnInteraction()
+            false
+          }
         }
       },
       update = { it.player = player },

@@ -18,6 +18,9 @@ import kotlinx.coroutines.withContext
 /** Outcome of a [IptvRepository.refresh] — mirrors the "Refresh mechanism" section of the spec. */
 data class RefreshResult(val added: Int, val removed: Int, val bookmarksRemoved: Int)
 
+/** SQLite's default max bound parameters per statement (SQLITE_MAX_VARIABLE_NUMBER) — stay under it for `IN (:ids)` queries. */
+private const val SqliteMaxBindVariables = 900
+
 class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgClient = IptvOrgClient()) {
 
   val categories: Flow<List<CategoryEntity>> = db.categoryDao().observeAll()
@@ -119,7 +122,9 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
     db.withTransaction {
       db.categoryDao().replaceAll(built.categories)
       db.countryDao().replaceAll(built.countries)
-      db.channelDao().deleteByIds(removedIds) // cascades to stream_urls + bookmarks
+      // Chunked: Room expands `WHERE id IN (:ids)` to one bind variable per id, and a removal
+      // batch of 999+ channels (e.g. a big iptv-org cleanup) would exceed SQLite's default limit.
+      for (chunk in removedIds.chunked(SqliteMaxBindVariables)) db.channelDao().deleteByIds(chunk) // cascades to stream_urls + bookmarks
       db.channelDao().upsertAll(built.channels)
       db.streamUrlDao().replaceAll(built.urlsByChannel)
     }

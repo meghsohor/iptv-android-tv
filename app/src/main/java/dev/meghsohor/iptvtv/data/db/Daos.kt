@@ -5,6 +5,7 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -69,7 +70,9 @@ interface ChannelDao {
    * thousands of channels can preserve manual Source picks without a per-channel round trip. */
   @Query("SELECT id, selectedSourceUrl FROM channels") suspend fun allSelectedSources(): List<ChannelSelection>
 
-  @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun upsertAll(channels: List<ChannelEntity>)
+  // @Upsert, not @Insert(REPLACE): REPLACE is a SQLite DELETE-then-INSERT under the hood, which
+  // would fire bookmarks' ON DELETE CASCADE for every surviving channel on every single refresh.
+  @Upsert suspend fun upsertAll(channels: List<ChannelEntity>)
 
   @Query("DELETE FROM channels WHERE id IN (:ids)") suspend fun deleteByIds(ids: List<String>)
 
