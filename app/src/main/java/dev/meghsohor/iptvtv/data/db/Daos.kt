@@ -85,14 +85,21 @@ interface StreamUrlDao {
   @Query("SELECT * FROM stream_urls WHERE channelId = :channelId ORDER BY sortOrder")
   suspend fun getForChannel(channelId: String): List<StreamUrlEntity>
 
-  @Query("DELETE FROM stream_urls WHERE channelId = :channelId") suspend fun deleteForChannel(channelId: String)
+  @Query("DELETE FROM stream_urls") suspend fun deleteAll()
 
   @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(urls: List<StreamUrlEntity>)
 
+  /**
+   * Replaces the entire table in one go. A refresh rebuilds [urlsByChannel] for essentially the
+   * whole catalog already (every channel found in the freshly-fetched playlists), and channels
+   * that disappeared are cascade-deleted separately — so a per-channel `WHERE channelId IN (...)`
+   * delete isn't just redundant, it's unsafe: with ~11k channels it blows past SQLite's default
+   * 999-bind-variable limit and crashes every refresh.
+   */
   @Transaction
-  suspend fun replaceForChannel(channelId: String, urls: List<StreamUrlEntity>) {
-    deleteForChannel(channelId)
-    insertAll(urls)
+  suspend fun replaceAll(urlsByChannel: Map<String, List<StreamUrlEntity>>) {
+    deleteAll()
+    insertAll(urlsByChannel.values.flatten())
   }
 }
 

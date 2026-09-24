@@ -11,7 +11,9 @@ import dev.meghsohor.iptvtv.data.remote.IptvOrgClient
 import dev.meghsohor.iptvtv.data.remote.M3uEntry
 import dev.meghsohor.iptvtv.data.remote.parseCsv
 import dev.meghsohor.iptvtv.data.remote.parseM3u
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.withContext
 
 /** Outcome of a [IptvRepository.refresh] — mirrors the "Refresh mechanism" section of the spec. */
 data class RefreshResult(val added: Int, val removed: Int, val bookmarksRemoved: Int)
@@ -46,61 +48,80 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
    * -> preserve bookmarks/manual picks for survivors -> single transaction. If the fetch fails
    * outright (e.g. offline), this throws before anything is touched — never a partial overwrite.
    */
+  private class BuiltChannels(
+    val channels: List<ChannelEntity>,
+    val urlsByChannel: Map<String, List<StreamUrlEntity>>,
+    val categories: List<CategoryEntity>,
+    val countries: List<CountryEntity>,
+  )
+
   suspend fun refresh(): RefreshResult {
-    val categoryRows = parseCsv(client.fetchCategoriesCsv())
-    val countryRows = parseCsv(client.fetchCountriesCsv())
-    val channelRows = parseCsv(client.fetchChannelsCsv()).associateBy { it.getValue("id") }
+    val categoryCsv = client.fetchCategoriesCsv()
+    val countryCsv = client.fetchCountriesCsv()
+    val channelCsv = client.fetchChannelsCsv()
 
     val countryCodes = client.fetchPlaylistCountryCodes()
     val playlists = client.fetchAllPlaylists(countryCodes)
     check(playlists.isNotEmpty()) { "Refresh failed: could not reach iptv-org (no playlists fetched)" }
 
-    // First-seen order preserved across all playlists combined -> "list order = source order".
-    val entriesByKey = LinkedHashMap<String, MutableList<M3uEntry>>()
-    for ((_, text) in playlists) {
-      for (entry in parseM3u(text)) {
-        entriesByKey.getOrPut(entry.tvgId) { mutableListOf() }.add(entry)
-      }
-    }
-
     val existingSelections = db.channelDao().allSelectedSources().associate { it.id to it.selectedSourceUrl }
-    val existingIds = existingSelections.keys
 
-    var order = 0
-    val newChannels = mutableListOf<ChannelEntity>()
-    val urlsByChannel = mutableMapOf<String, List<StreamUrlEntity>>()
-    for ((tvgId, entries) in entriesByKey) {
-      val channelId = tvgId.substringBefore('@')
-      val channelRow = channelRows[channelId] ?: continue // not in the metadata database, skip
-      val urls = entries.map { it.url }
-      val preservedSelection = existingSelections[tvgId]?.takeIf { it in urls }
-      newChannels +=
-        ChannelEntity(
-          id = tvgId,
-          displayName = entries.first().title.ifBlank { channelRow["name"].orEmpty() },
-          countryCode = channelRow["country"].orEmpty(),
-          categoryIds = channelRow["categories"].orEmpty(),
-          sortOrder = order++,
-          selectedSourceUrl = preservedSelection,
+    // CSV/M3U parsing and diff-building for ~11k channels is CPU-bound — keep it off the caller's
+    // (usually Main) dispatcher so the UI stays responsive while a refresh runs.
+    val built =
+      withContext(Dispatchers.Default) {
+        val categoryRows = parseCsv(categoryCsv)
+        val countryRows = parseCsv(countryCsv)
+        val channelRows = parseCsv(channelCsv).associateBy { it.getValue("id") }
+
+        // First-seen order preserved across all playlists combined -> "list order = source order".
+        val entriesByKey = LinkedHashMap<String, MutableList<M3uEntry>>()
+        for ((_, text) in playlists) {
+          for (entry in parseM3u(text)) {
+            entriesByKey.getOrPut(entry.tvgId) { mutableListOf() }.add(entry)
+          }
+        }
+
+        var order = 0
+        val newChannels = mutableListOf<ChannelEntity>()
+        val urlsByChannel = mutableMapOf<String, List<StreamUrlEntity>>()
+        for ((tvgId, entries) in entriesByKey) {
+          val channelId = tvgId.substringBefore('@')
+          val channelRow = channelRows[channelId] ?: continue // not in the metadata database, skip
+          val urls = entries.map { it.url }
+          val preservedSelection = existingSelections[tvgId]?.takeIf { it in urls }
+          newChannels +=
+            ChannelEntity(
+              id = tvgId,
+              displayName = entries.first().title.ifBlank { channelRow["name"].orEmpty() },
+              countryCode = channelRow["country"].orEmpty(),
+              categoryIds = channelRow["categories"].orEmpty(),
+              sortOrder = order++,
+              selectedSourceUrl = preservedSelection,
+            )
+          urlsByChannel[tvgId] = entries.mapIndexed { idx, e -> StreamUrlEntity(channelId = tvgId, url = e.url, sortOrder = idx) }
+        }
+        BuiltChannels(
+          channels = newChannels,
+          urlsByChannel = urlsByChannel,
+          categories = categoryRows.mapIndexed { i, r -> CategoryEntity(r.getValue("id"), r.getValue("name"), i) },
+          countries = countryRows.mapIndexed { i, r -> CountryEntity(r.getValue("code"), r.getValue("name"), r.getValue("flag"), i) },
         )
-      urlsByChannel[tvgId] = entries.mapIndexed { idx, e -> StreamUrlEntity(channelId = tvgId, url = e.url, sortOrder = idx) }
-    }
+      }
 
-    val newIds = newChannels.map { it.id }.toSet()
+    val existingIds = existingSelections.keys
+    val newIds = built.channels.map { it.id }.toSet()
     val removedIds = (existingIds - newIds).toList()
     val addedCount = (newIds - existingIds).size
     val bookmarkedIds = db.bookmarkDao().allChannelIds().toSet()
     val bookmarksRemovedCount = removedIds.count { it in bookmarkedIds }
 
     db.withTransaction {
-      db.categoryDao().replaceAll(categoryRows.mapIndexed { i, r -> CategoryEntity(r.getValue("id"), r.getValue("name"), i) })
-      db.countryDao()
-        .replaceAll(countryRows.mapIndexed { i, r -> CountryEntity(r.getValue("code"), r.getValue("name"), r.getValue("flag"), i) })
+      db.categoryDao().replaceAll(built.categories)
+      db.countryDao().replaceAll(built.countries)
       db.channelDao().deleteByIds(removedIds) // cascades to stream_urls + bookmarks
-      db.channelDao().upsertAll(newChannels)
-      for ((channelId, urls) in urlsByChannel) {
-        db.streamUrlDao().replaceForChannel(channelId, urls)
-      }
+      db.channelDao().upsertAll(built.channels)
+      db.streamUrlDao().replaceAll(built.urlsByChannel)
     }
 
     return RefreshResult(added = addedCount, removed = removedIds.size, bookmarksRemoved = bookmarksRemovedCount)
