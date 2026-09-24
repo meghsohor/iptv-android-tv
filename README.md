@@ -12,7 +12,7 @@ Android TV app for browsing and watching live TV channels sourced from [iptv-org
 - Channels with multiple mirrored stream URLs fall back automatically on playback failure, with a manual source-switch control in the player
 - Built for both low-end TV hardware and 4K displays (lazy-loaded lists, no bitmap/logo loading, density-independent UI)
 
-See [`android-tv-app-feature-list.md`](android-tv-app-feature-list.md) for the full spec this was built against, and [`famelack-findings.md`](famelack-findings.md) for the original site research that shaped it.
+See [`android-tv-app-feature-list.md`](android-tv-app-feature-list.md) for the full spec this was built against.
 
 ## Tech stack
 
