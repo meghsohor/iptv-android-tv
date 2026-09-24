@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -54,14 +55,6 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
       }
     }
 
-  private val currentChannel = currentChannelId.flatMapLatest { id -> if (id == null) flowOf(null) else repository.channelById(id) }
-
-  private val currentStreamUrls =
-    currentChannel.flatMapLatest { channel ->
-      if (channel == null) flowOf(emptyList())
-      else repository.streamUrls(channel.id).map { urls -> orderedByPreference(urls.map { it.url }, channel.selectedSourceUrl) }
-    }
-
   private val bookmarkedIds = repository.bookmarkedChannels.map { list -> list.map { it.id }.toSet() }
 
   private data class BrowseState(
@@ -79,7 +72,22 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
       BrowseState(p, cats, countries, chans, bm)
     }
 
-  private val playerState = combine(currentChannel, currentStreamUrls, ::PlayerState)
+  private val playerState =
+    currentChannelId
+      .flatMapLatest { id ->
+        if (id == null) {
+          flowOf(PlayerState(null, emptyList()))
+        } else {
+          combine(repository.channelById(id), repository.streamUrls(id)) { channel, urls ->
+            if (channel == null) PlayerState(null, emptyList())
+            else PlayerState(channel, orderedByPreference(urls.map { it.url }, channel.selectedSourceUrl))
+          }
+        }
+      }
+      // A refresh can cascade-delete the row for whatever's currently playing (or channel zap can
+      // land on an id a refresh just removed) — keep the last known-good channel/URLs instead of
+      // dropping to the "nothing playing" banner mid-watch; refresh only updates the dataset.
+      .scan(PlayerState(null, emptyList())) { previous, new -> if (new.currentChannel == null) previous else new }
 
   val uiState =
     combine(browseState, playerState, searchQuery, refreshing, refreshMessage) { browse, player, query, isRefreshing, message ->
@@ -196,7 +204,13 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
           onSuccess = { r -> "${r.added} added, ${r.removed} removed" + if (r.bookmarksRemoved > 0) ", ${r.bookmarksRemoved} bookmarks removed" else "" },
           onFailure = { e -> "Refresh failed: ${e.message}" },
         )
-      if (result.isSuccess && currentChannelId.value == null) selectInitialChannel()
+      if (result.isSuccess) {
+        // A refresh can remove channels; drop any that were in the zap list so stepping through
+        // it can't land on an id that no longer exists.
+        val validIds = repository.allChannels.first().map { it.id }.toSet()
+        currentPlaybackList.value = currentPlaybackList.value.filter { it in validIds }
+        if (currentChannelId.value == null) selectInitialChannel()
+      }
       refreshing.value = false
     }
   }

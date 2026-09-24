@@ -1,10 +1,10 @@
 # AGENTS.md
 
-Operational notes for any AI agent working in this repo — the stuff that isn't in the README because it's about environment/tooling quirks and hard-won gotchas, not the app itself. Read [`README.md`](README.md) first for what the app does; read [`android-tv-app-feature-list.md`](android-tv-app-feature-list.md) for the full feature spec before touching navigation/data-layer behavior, including its "Implementation status" section for what's actually built vs still deferred.
+Operational notes for any AI agent working in this repo — the stuff that isn't in the README because it's about environment/tooling quirks and hard-won gotchas, not the app itself. Read [`README.md`](README.md) first for what the app does before touching navigation/data-layer behavior.
 
 ## Current status (as of 2026-09-23)
 
-- The app itself: built and verified working end-to-end on the local TV emulator against real iptv-org data. See the spec doc's "Implementation status" for the built-vs-deferred breakdown.
+- The app itself: built and verified working end-to-end on the local TV emulator against real iptv-org data. See the README's Features section for what's built.
 - **PR #1** (`meghtv-branding-and-ci`) — open, not yet merged. Contains: MeghTV branding, `scripts/build-local-release.sh`, README rewrite, this file, the version bump to `1.1`/versionCode 2, and the release-workflow version-gating logic. Merging it **will** trigger a real `v1.1` release (versionName increased from the currently-published `1.0`) — that's intentional, it's the point of this PR.
 - **PR #2** (`add-pr-check-workflow`) — merged. Added `.github/workflows/ci.yml` (the informational `build` check described below).
 - Next natural step, whenever picking this back up: review and merge PR #1.

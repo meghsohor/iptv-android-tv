@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.CircularProgressIndicator
@@ -53,6 +54,9 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -136,9 +140,15 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
         }
       }
   ) {
-    if (state.currentStreamUrls.isNotEmpty()) {
-      VideoPlayer(streamUrls = state.currentStreamUrls, modifier = Modifier.fillMaxSize(), onInteraction = ::registerActivity)
-      NowPlayingBar(channel = state.currentChannel, modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth())
+    val currentChannel = state.currentChannel
+    if (state.currentStreamUrls.isNotEmpty() && currentChannel != null) {
+      VideoPlayer(
+        channelId = currentChannel.id,
+        streamUrls = state.currentStreamUrls,
+        modifier = Modifier.fillMaxSize(),
+        onInteraction = ::registerActivity,
+      )
+      NowPlayingBar(channel = currentChannel, modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth())
     } else {
       Image(
         painter = painterResource(R.drawable.tv_banner),
@@ -421,8 +431,14 @@ private fun ChannelRow(
       modifier =
         Modifier.clip(RoundedCornerShape(6.dp))
           .background(if (starFocused) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
-          .clickable(interactionSource = starInteraction, indication = null, onClick = onToggleBookmark)
-          .focusable(interactionSource = starInteraction)
+          .toggleable(
+            value = bookmarked,
+            onValueChange = { onToggleBookmark() },
+            role = Role.Checkbox,
+            interactionSource = starInteraction,
+            indication = null,
+          )
+          .semantics { contentDescription = "${channel.displayName} favourite" }
           .padding(6.dp),
     )
   }

@@ -60,18 +60,23 @@ private val NetworkErrorCodes =
  * [onInteraction] fires on every tap on the video — the touch equivalent of a D-pad key, since
  * [PlayerView] swallows touches before they'd otherwise bubble up to an ancestor Compose
  * `clickable`.
+ *
+ * [channelId] identifies the channel independently of [streamUrls] — two different channels can
+ * legitimately expose the exact same mirror list (duplicate source entries happen in iptv-org's
+ * data), and a switch between them must still restart playback even though the URL list, compared
+ * by value, wouldn't look like it changed.
  */
 @Composable
-fun VideoPlayer(streamUrls: List<String>, modifier: Modifier = Modifier, onInteraction: () -> Unit = {}) {
+fun VideoPlayer(channelId: String, streamUrls: List<String>, modifier: Modifier = Modifier, onInteraction: () -> Unit = {}) {
   val context = LocalContext.current
   val player = remember { ExoPlayer.Builder(context).build() }
   // Unkeyed (not `remember(streamUrls)`): the error listener below is installed once, in a
   // DisposableEffect keyed on `player`, and closes over these state objects at that point. If a
   // channel switch replaced them with fresh ones, the listener would keep mutating an orphaned
   // pair nothing reads any more — fallback and the error overlay would silently stop working
-  // after the very first switch. LaunchedEffect(streamUrls) below resets their values instead.
+  // after the very first switch. LaunchedEffect(channelId, streamUrls) below resets their values instead.
   var urlIndex by remember { mutableIntStateOf(0) }
-  var retryTick by remember(streamUrls) { mutableIntStateOf(0) }
+  var retryTick by remember(channelId, streamUrls) { mutableIntStateOf(0) }
   var playbackError by remember { mutableStateOf<PlaybackException?>(null) }
   val currentStreamUrls by rememberUpdatedState(streamUrls)
   val currentOnInteraction by rememberUpdatedState(onInteraction)
@@ -94,12 +99,12 @@ fun VideoPlayer(streamUrls: List<String>, modifier: Modifier = Modifier, onInter
     }
   }
 
-  LaunchedEffect(streamUrls) {
+  LaunchedEffect(channelId, streamUrls) {
     urlIndex = 0
     playbackError = null
   }
 
-  LaunchedEffect(streamUrls, urlIndex, retryTick) {
+  LaunchedEffect(channelId, streamUrls, urlIndex, retryTick) {
     val url = streamUrls.getOrNull(urlIndex)
     if (url == null) {
       player.stop()
