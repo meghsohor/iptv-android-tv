@@ -33,6 +33,9 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
 
   private val panel = MutableStateFlow<PanelState>(PanelState.CategoriesMenu)
   private val currentChannelId = MutableStateFlow<String?>(null)
+
+  /** Ordered channel ids of the list [currentChannelId] was selected from — see "Channel change (zap)" in the spec. */
+  private val currentPlaybackList = MutableStateFlow<List<String>>(emptyList())
   private val searchQuery = MutableStateFlow("")
   private val refreshing = MutableStateFlow(false)
   private val refreshMessage = MutableStateFlow<String?>(null)
@@ -99,19 +102,41 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     viewModelScope.launch {
       if (startedInitialSelection) return@launch
       startedInitialSelection = true
-      val bookmarks = repository.bookmarkedChannels.first()
-      if (bookmarks.isNotEmpty()) {
-        panel.value = PanelState.ChannelList(ChannelListSource.Favourites)
-        currentChannelId.value = bookmarks.first().id
-      } else {
-        panel.value = PanelState.ChannelList(ChannelListSource.AllChannels)
-        currentChannelId.value = repository.allChannels.first().firstOrNull()?.id
-      }
+      selectInitialChannel()
+      // Nothing locally yet (first launch) — fetch before the user has to think to hit Refresh.
+      if (currentChannelId.value == null) onRefresh()
+    }
+  }
+
+  private suspend fun selectInitialChannel() {
+    val bookmarks = repository.bookmarkedChannels.first()
+    if (bookmarks.isNotEmpty()) {
+      panel.value = PanelState.ChannelList(ChannelListSource.Favourites)
+      currentChannelId.value = bookmarks.first().id
+      currentPlaybackList.value = bookmarks.map { it.id }
+    } else {
+      val allChannels = repository.allChannels.first()
+      panel.value = PanelState.ChannelList(ChannelListSource.AllChannels)
+      currentChannelId.value = allChannels.firstOrNull()?.id
+      currentPlaybackList.value = allChannels.map { it.id }
     }
   }
 
   fun onSelectChannel(channelId: String) {
     currentChannelId.value = channelId
+    currentPlaybackList.value = uiState.value.listChannels.map { it.id }
+  }
+
+  /** Steps to the next/previous channel within [currentPlaybackList], wrapping at either end. Doesn't touch panel/nav state. */
+  fun onChannelUp() = stepChannel(1)
+
+  fun onChannelDown() = stepChannel(-1)
+
+  private fun stepChannel(delta: Int) {
+    val list = currentPlaybackList.value
+    val index = list.indexOf(currentChannelId.value)
+    if (index == -1) return
+    currentChannelId.value = list[(index + delta).mod(list.size)]
   }
 
   fun onSelectCategoryRow(category: CategoryEntity) {
@@ -165,14 +190,19 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     viewModelScope.launch {
       refreshing.value = true
       refreshMessage.value = null
+      val result = runCatching { repository.refresh() }
       refreshMessage.value =
-        runCatching { repository.refresh() }
-          .fold(
-            onSuccess = { r -> "${r.added} added, ${r.removed} removed" + if (r.bookmarksRemoved > 0) ", ${r.bookmarksRemoved} bookmarks removed" else "" },
-            onFailure = { e -> "Refresh failed: ${e.message}" },
-          )
+        result.fold(
+          onSuccess = { r -> "${r.added} added, ${r.removed} removed" + if (r.bookmarksRemoved > 0) ", ${r.bookmarksRemoved} bookmarks removed" else "" },
+          onFailure = { e -> "Refresh failed: ${e.message}" },
+        )
+      if (result.isSuccess && currentChannelId.value == null) selectInitialChannel()
       refreshing.value = false
     }
+  }
+
+  fun onDismissRefreshMessage() {
+    refreshMessage.value = null
   }
 }
 
