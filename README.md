@@ -1,20 +1,47 @@
+<p align="center">
+  <img src="app/src/main/res/drawable-nodpi/tv_banner.webp" alt="MeghTV" width="720">
+</p>
+
 # MeghTV
 
 ![Release APK](https://github.com/meghsohor/iptv-android-tv/actions/workflows/release.yml/badge.svg)
 
-Android TV app for browsing and watching live TV channels sourced from [iptv-org](https://github.com/iptv-org), organized by category and country, with local bookmarks — no account, no cloud sync.
+Live TV for Android TV and Android phones — thousands of free channels sourced from [iptv-org](https://github.com/iptv-org), browsable by category and country, with local favourites. No account, no cloud sync.
 
 ## Features
 
-- Bookmarks as the default view on launch, with the most recently bookmarked channel autoplaying immediately
-- Single sliding panel for navigation: pinned Refresh / Search / Favourites / Categories, drilling into Categories → Countries → channel lists
-- Manual "Refresh Channels" pulls the latest channel/category/country data + stream URLs from iptv-org and diffs it against what's stored locally, preserving bookmarks and any manual source picks
-- Channels with multiple mirrored stream URLs fall back automatically on playback failure
-- Built for both low-end TV hardware and 4K displays (lazy-loaded lists, no bitmap/logo loading, density-independent UI)
+**Browsing**
+- Opens on your Favourites (or Categories if you have none) and waits for you to pick a channel — nothing autoplays
+- One side panel for everything: Refresh, Search, Favourites and Categories, drilling into All Channels, a category, or Countries → a country
+- Every channel list is alphabetical and shows its channel count; categories and countries with no playable channels are left out
+- Search by channel name, updating as you type
+- Star any channel to add it to Favourites
+
+**Watching**
+- Live playback of HLS, DASH, SmoothStreaming and RTSP streams; on a phone, captions and audio tracks (when a channel has them) from the player's settings
+- Channels with several mirrored streams fall back to the next one automatically; if they all fail, a clear message (and whether it's your connection or the channel) with a Retry button
+- A loading spinner while a channel starts, and switching channels always starts clean
+
+**On a TV remote**
+- Arrow keys reveal the panel, which hides itself after a few seconds of no input (not while searching)
+- With the panel away, OK shows the player controls and then plays/pauses; the remote's play/pause key works any time
+- Channel Up / Down steps through the list you picked from, without opening the panel
+- Back peels off one layer at a time: player controls, then a hidden panel comes back, then up one level
+
+**On a phone**
+- Landscape, full screen (status bar hidden), with the screen kept awake while playing
+- The panel stays open until you tap outside it; the arrow tab on the right edge brings it back
+- Tap the video to show the controls, tap the controls to play/pause, or double-tap any time; on-screen volume and mute
+- Playback stops when you leave the app and rejoins live when you come back
+
+**Refreshing**
+- "Refresh Channels" pulls the latest channels, categories, countries and stream URLs from iptv-org and diffs them against what's stored locally, keeping your favourites — runs automatically on first launch
+
+Built for low-end TV hardware as well as 4K displays: lazy-loaded lists, no logo/bitmap loading, density-independent UI.
 
 ## Tech stack
 
-Kotlin, Jetpack Compose (`androidx.tv` for TV-specific components), Media3/ExoPlayer for playback, Room for local storage, OkHttp for fetching iptv-org's data.
+Kotlin, Jetpack Compose, Media3/ExoPlayer for playback, Room for local storage, OkHttp for fetching iptv-org's data.
 
 ## Building locally
 
