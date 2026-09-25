@@ -12,8 +12,8 @@ android {
         applicationId = "dev.meghsohor.iptvtv"
         minSdk = 23
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
     }
 
     buildTypes {
@@ -90,6 +90,11 @@ dependencies {
   // Playback
   implementation(libs.androidx.media3.exoplayer)
   implementation(libs.androidx.media3.exoplayer.hls)
+  // The stream formats iptv-org's playlists use: without a module, Media3 can't open that format at
+  // all (DASH alone is ~200 streams). Not RTMP: its native library costs ~380 KB for 6 channels.
+  implementation(libs.androidx.media3.exoplayer.dash)
+  implementation(libs.androidx.media3.exoplayer.smoothstreaming)
+  implementation(libs.androidx.media3.exoplayer.rtsp)
   implementation(libs.androidx.media3.ui)
 
   // Local storage (dataset + bookmarks)

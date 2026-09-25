@@ -2,9 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Only to tell "no internet" apart from "this one stream's server is down" in the playback error. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Runs fine without a D-pad-driven Leanback UI (e.g. during dev on a phone/tablet),
-         but declared so TV launchers/stores treat this as a TV app. -->
+    <!-- Optional, since phones are a supported target too; declared so TV launchers/stores list it as a TV app. -->
     <uses-feature
         android:name="android.software.leanback"
         android:required="false" />
@@ -24,7 +25,8 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:screenOrientation="landscape">
+            android:configChanges="keyboard|keyboardHidden|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+            android:screenOrientation="sensorLandscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

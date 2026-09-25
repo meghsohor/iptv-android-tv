@@ -2,7 +2,7 @@ package dev.meghsohor.iptvtv.ui.main
 
 /** What the dynamic area of the single side panel is showing — see "Navigation" in the spec. */
 sealed interface PanelState {
-  /** The idle top-level list: All Channels, Countries, then the rest of iptv-org's categories. */
+  /** The top-level list: All Channels, Countries, then every iptv-org category that has channels. */
   data object CategoriesMenu : PanelState
 
   /** Country names only, reached via the "Countries" row in [CategoriesMenu]. */
