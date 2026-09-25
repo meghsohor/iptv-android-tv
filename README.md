@@ -6,38 +6,36 @@
 
 ![Release APK](https://github.com/meghsohor/iptv-android-tv/actions/workflows/release.yml/badge.svg)
 
-Live TV for Android TV and Android phones — thousands of free channels sourced from [iptv-org](https://github.com/iptv-org), browsable by category and country, with local favourites. No account, no cloud sync.
+An Android TV and Android phone app for watching the live TV channels listed by [iptv-org](https://github.com/iptv-org). Channels are browsed by category or country, and favourites are stored on the device.
 
 ## Features
 
-**Browsing**
-- Opens on your Favourites (or Categories if you have none) and waits for you to pick a channel — nothing autoplays
-- One side panel for everything: Refresh, Search, Favourites and Categories, drilling into All Channels, a category, or Countries → a country
-- Every channel list is alphabetical and shows its channel count; categories and countries with no playable channels are left out
-- Search by channel name, updating as you type
-- Star any channel to add it to Favourites
+**Channels**
+- Channel data (channels, categories, countries and stream URLs) comes from iptv-org. "Refresh Channels" downloads the latest data and updates the stored copy, keeping favourites for channels that are still listed. It also runs on first launch.
+- The side panel has Refresh, Search, Favourites and Categories. Categories leads to All Channels, a single category, or Countries and then a country. Categories and countries without channels are not listed.
+- Channel lists are sorted by name and show a channel count. An empty list shows a short message instead.
+- Search matches channel names.
+- The star next to a channel adds it to Favourites. The app opens on Favourites if there are any, otherwise on Categories.
 
-**Watching**
-- Live playback of HLS, DASH, SmoothStreaming and RTSP streams; on a phone, captions and audio tracks (when a channel has them) from the player's settings
-- Channels with several mirrored streams fall back to the next one automatically; if they all fail, a clear message (and whether it's your connection or the channel) with a Retry button
-- A loading spinner while a channel starts, and switching channels always starts clean
+**Playback**
+- Supported stream formats: HLS, DASH, SmoothStreaming and RTSP.
+- When a channel has several stream URLs and one fails, the next one is tried. If all fail, an error message with a Retry button is shown; it says whether the device is offline.
+- On a phone, the CC button (captions) and the settings menu (audio track) are available when the stream has them.
+- Playback stops when the app goes to the background and rejoins at the live position when it returns.
 
-**On a TV remote**
-- Arrow keys reveal the panel, which hides itself after a few seconds of no input (not while searching)
-- With the panel away, OK shows the player controls and then plays/pauses; the remote's play/pause key works any time
-- Channel Up / Down steps through the list you picked from, without opening the panel
-- Back peels off one layer at a time: player controls, then a hidden panel comes back, then up one level
+**TV remote**
+- The arrow keys open the panel. It closes after 5 seconds without input, except while the search field is focused or a refresh is running.
+- With the panel closed, OK shows the player controls, and OK again plays or pauses. The play/pause media key also works.
+- Channel Up and Channel Down switch to the next or previous channel in the list the current channel was picked from.
+- Back first hides the player controls, then opens the panel, then goes up one level.
 
-**On a phone**
-- Landscape, full screen (status bar hidden), with the screen kept awake while playing
-- The panel stays open until you tap outside it; the arrow tab on the right edge brings it back
-- Tap the video to show the controls, tap the controls to play/pause, or double-tap any time; on-screen volume and mute
-- Playback stops when you leave the app and rejoins live when you come back
+**Phone**
+- Landscape only, with the status bar hidden. The screen stays on during playback.
+- The panel stays open until you tap outside it. The arrow on the right edge opens it again.
+- A tap on the video shows the controls. With the controls showing, a tap plays or pauses. With the panel closed, a double tap plays or pauses.
+- Volume and mute buttons are shown with the player controls.
 
-**Refreshing**
-- "Refresh Channels" pulls the latest channels, categories, countries and stream URLs from iptv-org and diffs them against what's stored locally, keeping your favourites — runs automatically on first launch
-
-Built for low-end TV hardware as well as 4K displays: lazy-loaded lists, no logo/bitmap loading, density-independent UI.
+List rows are only drawn while on screen, and no channel logos are downloaded.
 
 ## Tech stack
 
