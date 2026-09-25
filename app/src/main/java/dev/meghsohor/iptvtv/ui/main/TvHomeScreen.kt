@@ -224,6 +224,8 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
           return@onPreviewKeyEvent true
         }
         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        // A held key repeats KeyDown; toggles act on the first one only, repeats are swallowed.
+        val repeated = event.nativeKeyEvent.repeatCount > 0
         // Focus parked on the root itself while the panel is up (see the focus-loss catch above):
         // directional search never looks inside the focused node, so hand focus to the panel directly.
         if (panelOpen && rootSelfFocused && !touchMode && event.key in PanelNavigationKeys) {
@@ -240,7 +242,7 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
             viewModel.onChannelDown()
             true
           }
-          Key.MediaPlayPause -> playerCommands.tryEmit(PlayerCommand.TogglePlayPause)
+          Key.MediaPlayPause -> repeated || playerCommands.tryEmit(PlayerCommand.TogglePlayPause)
           Key.MediaPlay -> playerCommands.tryEmit(PlayerCommand.Play)
           Key.MediaPause -> playerCommands.tryEmit(PlayerCommand.Pause)
           // With the panel away, OK works like a tap on a phone: shows the controls, then plays/pauses
@@ -252,8 +254,8 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
                 false
               }
               !rootSelfFocused -> false // something on the video has focus (Retry): let it act
-              playerControlsVisible -> playerCommands.tryEmit(PlayerCommand.TogglePlayPause)
-              hasPlayer -> playerCommands.tryEmit(PlayerCommand.ShowControls)
+              playerControlsVisible -> repeated || playerCommands.tryEmit(PlayerCommand.TogglePlayPause)
+              hasPlayer -> repeated || playerCommands.tryEmit(PlayerCommand.ShowControls)
               else -> {
                 openPanel()
                 false
