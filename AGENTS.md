@@ -1,12 +1,13 @@
 # AGENTS.md
 
-Operational notes for any AI agent working in this repo — the stuff that isn't in the README because it's about environment/tooling quirks and hard-won gotchas, not the app itself. Read [`README.md`](README.md) first for what the app does before touching navigation/data-layer behavior.
+Operational notes for any AI agent working in this repo — the stuff that isn't in the README because it's about environment/tooling quirks and hard-won gotchas, not the app itself. The README only lists the main features; the detailed navigation and playback behaviour is documented in comments in `TvHomeScreen.kt`, `VideoPlayer.kt` and `TvHomeViewModel.kt`.
 
 ## Current status (as of 2026-09-25)
 
-- The app runs on both Android TV (D-pad) and Android phones (touch, landscape) — verified on the `tv_1080p` and `medium_phone` emulators against real iptv-org data. See the README's Features section for what's built.
+- The app runs on both Android TV (D-pad) and Android phones (touch, landscape) — verified on the `tv_1080p` and `medium_phone` emulators against real iptv-org data.
 - PRs #1 (branding + release gating), #2 (CI check) and #3 (panel auto-hide, channel zap, captions, style) are merged; releases `v1.1` and `v1.2` are published.
-- Branch `mobile-layout-and-touch-fixes` — phone/touch support, player controls, TV remote fixes, performance work, README banner — bumps to `1.3`/versionCode 4, so merging it publishes `v1.3`.
+- **PR #4** (`mobile-layout-and-touch-fixes`) is open: phone support, player controls, TV remote fixes, DASH/SmoothStreaming/RTSP, performance work, README banner. It bumps to `1.3`/versionCode 4, so merging it publishes `v1.3`. Two independent review passes and two Copilot reviews are addressed, with a reply on every Copilot thread; one Copilot suggestion ("0 channels" on empty lists) was declined with reasons on the thread.
+- Next, after PR #4 merges: a tests PR (TV key routing, ViewModel startup and channel zap, DAO ordering and pruning).
 
 ## Dev environment — command-line only, no Android Studio
 
@@ -56,6 +57,9 @@ Physical keyboard/mouse input to the emulator's own window does not work on this
 ## Git workflow
 
 - **No direct pushes to `main`.** Everything goes through a PR, even solo work.
+- **Commit messages are one line, no body.** The repo squash-merges with `COMMIT_MESSAGES` and `release.yml` publishes releases without notes, so GitHub shows the merge commit's message — every commit message in the PR, concatenated — on the release page. Long bodies are why the v1.2 release page is 105 lines.
+- Docs and PR descriptions are plain statements of what the app does: no selling tone, and no internal history such as fixed bugs or reviewer finding IDs.
+- A force-push while a Copilot review is running doesn't cancel it; the review lands on the old commits.
 - Version bumps (`versionName` + `versionCode` in `app/build.gradle.kts`) belong in the PR that should trigger a release.
 - The release workflow (`.github/workflows/release.yml`) has a `check-version` gate: it only builds+signs+publishes if `versionName` increased since the last published release. A merge that doesn't bump it is a no-op for releases (no rebuild, no republish) — this is intentional, not a bug.
 - `.github/workflows/ci.yml` builds the debug APK on every PR targeting `main` (check name: `build`) — **informational only**, not a hard merge gate. Classic branch protection *and* the newer Rulesets API both refused with "Upgrade to GitHub Pro or make this repository public" — a private repo on a free personal account can't enforce required status checks via GitHub's own merge-blocking. Don't re-attempt this without one of those two things changing; it's a real account-tier wall, not a config mistake.
@@ -67,4 +71,6 @@ Physical keyboard/mouse input to the emulator's own window does not work on this
 - A category filter inside Search was discussed and deferred by the user.
 - No manual Source-switcher UI in the player yet (the data model and automatic fallback-on-error both already support multiple sources per channel; just no on-screen "Source 2 of 3" control).
 - `androidx.tv` (tv-foundation/tv-material) is a dependency but the UI currently uses plain Compose Foundation/Material3 widgets with manual focus handling, not the TV-specific component set — a deliberate risk-aversion choice made under time pressure, not a final decision.
+- Channel lists sort with `COLLATE NOCASE`, which only folds ASCII case, so non-Latin names sort after Latin ones.
+- On Android 16, screens 600dp and wider (tablets, unfolded foldables) ignore the landscape lock.
 - Paging 3 is a dependency but not actually wired into any query yet — "All Channels" (~11k rows) still loads as a plain `Flow<List<ChannelEntity>>`, which is the one list where this will eventually matter for low-end-device memory.
