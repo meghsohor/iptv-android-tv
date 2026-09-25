@@ -9,19 +9,23 @@ import dev.meghsohor.iptvtv.data.db.CountryEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.scan
+import kotlinx.coroutines.flow.runningReduce
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 data class TvHomeUiState(
   val panel: PanelState = PanelState.CategoriesMenu,
+  /** False until launch has picked the opening view (Favourites or Categories) — [panel] may still change before that. */
+  val startupPanelChosen: Boolean = false,
   val categories: List<CategoryEntity> = emptyList(),
   val countries: List<CountryEntity> = emptyList(),
-  val listChannels: List<ChannelEntity> = emptyList(),
+  /** Null while the current [panel]'s list is still loading. */
+  val listChannels: List<ChannelEntity>? = null,
   val bookmarkedIds: Set<String> = emptySet(),
   val currentChannel: ChannelEntity? = null,
   val currentStreamUrls: List<String> = emptyList(),
@@ -42,34 +46,44 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
   private val refreshMessage = MutableStateFlow<String?>(null)
   private var startedInitialSelection = false
 
+  /** A loaded list, tagged with the panel it was loaded for. */
+  private data class LoadedList(val panel: PanelState, val channels: List<ChannelEntity>)
+
   private val listChannels =
     panel.flatMapLatest { state ->
-      val source = (state as? PanelState.ChannelList)?.source ?: return@flatMapLatest flowOf(emptyList())
+      val source = (state as? PanelState.ChannelList)?.source ?: return@flatMapLatest flowOf(LoadedList(state, emptyList()))
       when (source) {
         ChannelListSource.Favourites -> repository.bookmarkedChannels
         ChannelListSource.AllChannels -> repository.allChannels
         is ChannelListSource.Category -> repository.channelsByCategory(source.id)
         is ChannelListSource.Country -> repository.channelsByCountry(source.code)
+        // Debounced: each keystroke would otherwise run a LIKE scan over ~11k rows, which a low-end TV feels.
         ChannelListSource.Search ->
-          searchQuery.flatMapLatest { q -> if (q.isBlank()) flowOf(emptyList()) else repository.search(q) }
-      }
+          searchQuery.debounce(SearchDebounceMs).flatMapLatest { q -> if (q.isBlank()) flowOf(emptyList()) else repository.search(q) }
+      }.map { LoadedList(state, it) }
     }
 
   private val bookmarkedIds = repository.bookmarkedChannels.map { list -> list.map { it.id }.toSet() }
 
   private data class BrowseState(
     val panel: PanelState,
+    val startupPanelChosen: Boolean,
     val categories: List<CategoryEntity>,
     val countries: List<CountryEntity>,
-    val listChannels: List<ChannelEntity>,
+    val listChannels: List<ChannelEntity>?,
     val bookmarkedIds: Set<String>,
   )
 
   private data class PlayerState(val currentChannel: ChannelEntity?, val currentStreamUrls: List<String>)
 
+  private val startupPanelChosen = MutableStateFlow(false)
+
   private val browseState =
-    combine(panel, repository.categories, repository.countries, listChannels, bookmarkedIds) { p, cats, countries, chans, bm ->
-      BrowseState(p, cats, countries, chans, bm)
+    combine(combine(panel, startupPanelChosen, ::Pair), repository.categories, repository.countries, listChannels, bookmarkedIds) {
+      (p, chosen), cats, countries, loaded, bm ->
+      // Right after a panel change, the previous panel's list is still the latest one loaded —
+      // report "loading" rather than show it (and its count) under the new heading.
+      BrowseState(p, chosen, cats, countries, loaded.channels.takeIf { loaded.panel == p }, bm)
     }
 
   private val playerState =
@@ -87,12 +101,15 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
       // A refresh can cascade-delete the row for whatever's currently playing (or channel zap can
       // land on an id a refresh just removed) — keep the last known-good channel/URLs instead of
       // dropping to the "nothing playing" banner mid-watch; refresh only updates the dataset.
-      .scan(PlayerState(null, emptyList())) { previous, new -> if (new.currentChannel == null) previous else new }
+      // runningReduce, not scan: scan's seed is re-emitted whenever this restarts (after 5 s in the
+      // background), briefly reporting "nothing playing" — which tore the player down.
+      .runningReduce { previous, new -> if (new.currentChannel == null) previous else new }
 
   val uiState =
     combine(browseState, playerState, searchQuery, refreshing, refreshMessage) { browse, player, query, isRefreshing, message ->
         TvHomeUiState(
           panel = browse.panel,
+          startupPanelChosen = browse.startupPanelChosen,
           categories = browse.categories,
           countries = browse.countries,
           listChannels = browse.listChannels,
@@ -110,29 +127,17 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     viewModelScope.launch {
       if (startedInitialSelection) return@launch
       startedInitialSelection = true
-      selectInitialChannel()
+      // No autoplay: open on Favourites if there are any (Categories otherwise) and wait for a pick.
+      if (repository.bookmarkedChannels.first().isNotEmpty()) panel.value = PanelState.ChannelList(ChannelListSource.Favourites)
+      startupPanelChosen.value = true
       // Nothing locally yet (first launch) — fetch before the user has to think to hit Refresh.
-      if (currentChannelId.value == null) onRefresh()
-    }
-  }
-
-  private suspend fun selectInitialChannel() {
-    val bookmarks = repository.bookmarkedChannels.first()
-    if (bookmarks.isNotEmpty()) {
-      panel.value = PanelState.ChannelList(ChannelListSource.Favourites)
-      currentChannelId.value = bookmarks.first().id
-      currentPlaybackList.value = bookmarks.map { it.id }
-    } else {
-      val allChannels = repository.allChannels.first()
-      panel.value = PanelState.ChannelList(ChannelListSource.AllChannels)
-      currentChannelId.value = allChannels.firstOrNull()?.id
-      currentPlaybackList.value = allChannels.map { it.id }
+      if (!repository.hasChannels()) onRefresh() else repository.pruneEmptyMenus()
     }
   }
 
   fun onSelectChannel(channelId: String) {
     currentChannelId.value = channelId
-    currentPlaybackList.value = uiState.value.listChannels.map { it.id }
+    currentPlaybackList.value = uiState.value.listChannels.orEmpty().map { it.id }
   }
 
   /** Steps to the next/previous channel within [currentPlaybackList], wrapping at either end. Doesn't touch panel/nav state. */
@@ -180,11 +185,9 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     searchQuery.value = query
   }
 
-  fun onBack(): Boolean {
-    val current = panel.value
-    if (current == PanelState.CategoriesMenu) return false // let the system handle it (exit)
-    panel.value = current.backTarget()
-    return true
+  /** Up one level; a no-op at the top (Categories), where the screen exits instead. */
+  fun onBack() {
+    panel.value = panel.value.backTarget()
   }
 
   fun onToggleBookmark(channel: ChannelEntity) {
@@ -207,9 +210,8 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
       if (result.isSuccess) {
         // A refresh can remove channels; drop any that were in the zap list so stepping through
         // it can't land on an id that no longer exists.
-        val validIds = repository.allChannels.first().map { it.id }.toSet()
+        val validIds = repository.allChannelIds().toSet()
         currentPlaybackList.value = currentPlaybackList.value.filter { it in validIds }
-        if (currentChannelId.value == null) selectInitialChannel()
       }
       refreshing.value = false
     }
@@ -219,6 +221,8 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     refreshMessage.value = null
   }
 }
+
+private const val SearchDebounceMs = 250L
 
 /** Moves the manually-selected source (if any) to the front; automatic fallback then walks this list in order. */
 private fun orderedByPreference(urls: List<String>, preferred: String?): List<String> =
