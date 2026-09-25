@@ -3,5 +3,6 @@
 
     <style name="Theme.IPTVAndroidTV" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/megh_background</item>
+        <item name="android:windowSplashScreenBackground">@color/megh_background</item>
     </style>
 </resources>
