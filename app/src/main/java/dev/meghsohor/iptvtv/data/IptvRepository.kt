@@ -28,6 +28,18 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
   val allChannels: Flow<List<ChannelEntity>> = db.channelDao().observeAll()
   val bookmarkedChannels: Flow<List<ChannelEntity>> = db.channelDao().observeBookmarked()
 
+  /** Just the ids — for validating against, without materializing ~11k full rows. */
+  suspend fun allChannelIds(): List<String> = db.channelDao().allIds()
+
+  suspend fun hasChannels(): Boolean = db.channelDao().hasAny()
+
+  /** Drops categories/countries with no channels — what refresh already does, for data stored before it did. */
+  suspend fun pruneEmptyMenus() =
+    db.withTransaction {
+      db.categoryDao().deleteUnused()
+      db.countryDao().deleteUnused()
+    }
+
   fun channelsByCategory(categoryId: String): Flow<List<ChannelEntity>> = db.channelDao().observeByCategory(categoryId)
 
   fun channelsByCountry(countryCode: String): Flow<List<ChannelEntity>> = db.channelDao().observeByCountry(countryCode)
@@ -77,7 +89,7 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
         val countryRows = parseCsv(countryCsv)
         val channelRows = parseCsv(channelCsv).associateBy { it.getValue("id") }
 
-        // First-seen order preserved across all playlists combined -> "list order = source order".
+        // First-seen order across all playlists; kept as sortOrder, which only breaks ties in the by-name lists.
         val entriesByKey = LinkedHashMap<String, MutableList<M3uEntry>>()
         for ((_, text) in playlists) {
           for (entry in parseM3u(text)) {
@@ -104,11 +116,22 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
             )
           urlsByChannel[tvgId] = entries.mapIndexed { idx, e -> StreamUrlEntity(channelId = tvgId, url = e.url, sortOrder = idx) }
         }
+        // Only categories and countries that at least one playable channel is in — iptv-org defines
+        // plenty (the "XXX" category, Antarctica, ...) its public playlists never carry a stream for,
+        // and each was only a dead end. One reappears by itself if it ever gets a channel.
+        val usedCategoryIds = newChannels.flatMapTo(HashSet()) { it.categoryIds.split(';') }
+        val usedCountryCodes = newChannels.mapTo(HashSet()) { it.countryCode }
         BuiltChannels(
           channels = newChannels,
           urlsByChannel = urlsByChannel,
-          categories = categoryRows.mapIndexed { i, r -> CategoryEntity(r.getValue("id"), r.getValue("name"), i) },
-          countries = countryRows.mapIndexed { i, r -> CountryEntity(r.getValue("code"), r.getValue("name"), r.getValue("flag"), i) },
+          categories =
+            categoryRows
+              .filter { it["id"] in usedCategoryIds }
+              .mapIndexed { i, r -> CategoryEntity(r.getValue("id"), r.getValue("name"), i) },
+          countries =
+            countryRows
+              .filter { it["code"] in usedCountryCodes }
+              .mapIndexed { i, r -> CountryEntity(r.getValue("code"), r.getValue("name"), r.getValue("flag"), i) },
         )
       }
 

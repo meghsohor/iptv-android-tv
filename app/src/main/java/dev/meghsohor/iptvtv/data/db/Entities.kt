@@ -5,7 +5,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-/** Source order preserved via [sortOrder] — lists are never re-sorted, per spec. */
+/** Source order kept in [sortOrder]: menus list in it; channel lists sort by name and only use it for ties. */
 @Entity(tableName = "categories")
 data class CategoryEntity(@PrimaryKey val id: String, val name: String, val sortOrder: Int)
 

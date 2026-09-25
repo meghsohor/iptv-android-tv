@@ -16,6 +16,11 @@ interface CategoryDao {
 
   @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(categories: List<CategoryEntity>)
 
+  @Query(
+    "DELETE FROM categories WHERE NOT EXISTS (SELECT 1 FROM channels WHERE (';' || channels.categoryIds || ';') LIKE ('%;' || categories.id || ';%'))"
+  )
+  suspend fun deleteUnused()
+
   @Transaction
   suspend fun replaceAll(categories: List<CategoryEntity>) {
     deleteAll()
@@ -31,6 +36,8 @@ interface CountryDao {
 
   @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(countries: List<CountryEntity>)
 
+  @Query("DELETE FROM countries WHERE code NOT IN (SELECT DISTINCT countryCode FROM channels)") suspend fun deleteUnused()
+
   @Transaction
   suspend fun replaceAll(countries: List<CountryEntity>) {
     deleteAll()
@@ -40,27 +47,31 @@ interface CountryDao {
 
 data class ChannelSelection(val id: String, val selectedSourceUrl: String?)
 
+// Every list is alphabetical by name (source order only breaks ties): the source order is
+// playlist-by-playlist, which reads as random when scrolling a single country or category.
 @Dao
 interface ChannelDao {
-  @Query("SELECT * FROM channels ORDER BY sortOrder") fun observeAll(): Flow<List<ChannelEntity>>
+  @Query("SELECT * FROM channels ORDER BY displayName COLLATE NOCASE, sortOrder") fun observeAll(): Flow<List<ChannelEntity>>
 
   @Query(
-    "SELECT * FROM channels WHERE (';' || categoryIds || ';') LIKE ('%;' || :categoryId || ';%') ORDER BY sortOrder"
+    "SELECT * FROM channels WHERE (';' || categoryIds || ';') LIKE ('%;' || :categoryId || ';%') ORDER BY displayName COLLATE NOCASE, sortOrder"
   )
   fun observeByCategory(categoryId: String): Flow<List<ChannelEntity>>
 
-  @Query("SELECT * FROM channels WHERE countryCode = :countryCode ORDER BY sortOrder")
+  @Query("SELECT * FROM channels WHERE countryCode = :countryCode ORDER BY displayName COLLATE NOCASE, sortOrder")
   fun observeByCountry(countryCode: String): Flow<List<ChannelEntity>>
 
-  @Query("SELECT * FROM channels WHERE displayName LIKE '%' || :query || '%' ORDER BY sortOrder")
+  @Query("SELECT * FROM channels WHERE displayName LIKE '%' || :query || '%' ORDER BY displayName COLLATE NOCASE, sortOrder")
   fun observeSearch(query: String): Flow<List<ChannelEntity>>
 
   @Query(
-    "SELECT channels.* FROM channels INNER JOIN bookmarks ON channels.id = bookmarks.channelId ORDER BY bookmarks.addedAt DESC"
+    "SELECT channels.* FROM channels INNER JOIN bookmarks ON channels.id = bookmarks.channelId ORDER BY channels.displayName COLLATE NOCASE, channels.sortOrder"
   )
   fun observeBookmarked(): Flow<List<ChannelEntity>>
 
   @Query("SELECT id FROM channels") suspend fun allIds(): List<String>
+
+  @Query("SELECT EXISTS(SELECT 1 FROM channels)") suspend fun hasAny(): Boolean
 
   @Query("SELECT * FROM channels WHERE id = :id") suspend fun getById(id: String): ChannelEntity?
 
