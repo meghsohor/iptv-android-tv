@@ -101,9 +101,10 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
       // A refresh can cascade-delete the row for whatever's currently playing (or channel zap can
       // land on an id a refresh just removed) — keep the last known-good channel/URLs instead of
       // dropping to the "nothing playing" banner mid-watch; refresh only updates the dataset.
-      // runningReduce, not scan: scan's seed is re-emitted whenever this restarts (after 5 s in the
-      // background), briefly reporting "nothing playing" — which tore the player down.
       .runningReduce { previous, new -> if (new.currentChannel == null) previous else new }
+      // Shared for the ViewModel's lifetime: uiState stops collecting 5 s into the background, and a
+      // restarted chain would have no "last good" state to fall back on, tearing the player down.
+      .stateIn(viewModelScope, SharingStarted.Eagerly, PlayerState(null, emptyList()))
 
   val uiState =
     combine(browseState, playerState, searchQuery, refreshing, refreshMessage) { browse, player, query, isRefreshing, message ->
@@ -209,9 +210,11 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
         )
       if (result.isSuccess) {
         // A refresh can remove channels; drop any that were in the zap list so stepping through
-        // it can't land on an id that no longer exists.
+        // it can't land on an id that no longer exists. The playing one stays even if removed (it
+        // keeps playing), or Channel Up/Down would have nothing to step from.
         val validIds = repository.allChannelIds().toSet()
-        currentPlaybackList.value = currentPlaybackList.value.filter { it in validIds }
+        val playing = currentChannelId.value
+        currentPlaybackList.value = currentPlaybackList.value.filter { it in validIds || it == playing }
       }
       refreshing.value = false
     }

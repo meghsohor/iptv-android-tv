@@ -295,10 +295,17 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
         painter = painterResource(R.drawable.tv_banner),
         contentDescription = null,
         contentScale = ContentScale.Crop,
+        // Tappable only while there's a menu to close — otherwise a screen reader would announce a no-op action.
         modifier =
-          Modifier.fillMaxSize().clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) {
-            panelOpen = false
-          },
+          Modifier.fillMaxSize()
+            .then(
+              if (panelOpen) {
+                Modifier.clickable(onClickLabel = "Close menu", indication = null, interactionSource = null) { panelOpen = false }
+                  .semantics { contentDescription = "Close menu" }
+              } else {
+                Modifier
+              }
+            ),
       )
     }
 

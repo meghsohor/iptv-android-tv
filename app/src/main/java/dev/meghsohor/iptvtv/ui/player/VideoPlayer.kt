@@ -350,8 +350,8 @@ fun VideoPlayer(
             player.playWhenReady = !player.playWhenReady
             if (currentControlsAllowed) view.showController() // so the new play/pause state is visible
           }
-          // With the menu open a tap only closes it; otherwise a tap on the controls overlay
-          // plays/pauses, and on bare video brings the controls up. Double tap always plays/pauses.
+          // With the menu open a tap (or double tap) only closes it; otherwise a tap on the controls
+          // overlay plays/pauses, on bare video brings the controls up, and a double tap plays/pauses.
           installTapHandler(
             onTap = { view ->
               if (!currentOnTap()) {
@@ -409,9 +409,9 @@ fun VideoPlayer(
 
     playbackError?.let { error ->
       PlaybackErrorOverlay(
-        // Asked of the device, not inferred from the error: one unreachable stream server times out
-        // exactly like a dead connection does.
-        offline = remember(error) { !context.hasInternet() },
+        // Mostly asked of the device, since one unreachable stream server times out exactly like a
+        // dead connection does. But an HTTP error status means a server answered: never "offline".
+        offline = remember(error) { error.errorCode != PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && !context.hasInternet() },
         onRetry = {
           attempt = SourceAttempt()
           playbackError = null
@@ -561,7 +561,9 @@ private fun PlaybackErrorOverlay(offline: Boolean, onRetry: () -> Unit, endPaddi
 private fun Context.hasInternet(): Boolean {
   val connectivity = getSystemService(ConnectivityManager::class.java) ?: return true
   val capabilities = connectivity.getNetworkCapabilities(connectivity.activeNetwork) ?: return false
-  return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+  // VALIDATED too: Wi-Fi whose router has lost its uplink, or a captive portal, still claims INTERNET.
+  return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+    capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
 }
 
 @Composable
