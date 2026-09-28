@@ -59,3 +59,11 @@ data class StreamUrlEntity(val channelId: String, val url: String, val sortOrder
   ],
 )
 data class BookmarkEntity(@PrimaryKey val channelId: String, val addedAt: Long)
+
+/** A channel whose every source failed the last time it was played. Kept across refreshes; dropped once the channel leaves the catalogue. */
+@Entity(tableName = "failed_channels")
+data class FailedChannelEntity(@PrimaryKey val channelId: String, val failedAt: Long)
+
+/** A channel the user deleted: hidden from every list until the next refresh clears this table. The row itself stays, so its favourite survives. */
+@Entity(tableName = "deleted_channels")
+data class DeletedChannelEntity(@PrimaryKey val channelId: String)

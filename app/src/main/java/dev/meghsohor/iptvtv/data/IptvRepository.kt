@@ -5,6 +5,8 @@ import dev.meghsohor.iptvtv.data.db.BookmarkEntity
 import dev.meghsohor.iptvtv.data.db.CategoryEntity
 import dev.meghsohor.iptvtv.data.db.ChannelEntity
 import dev.meghsohor.iptvtv.data.db.CountryEntity
+import dev.meghsohor.iptvtv.data.db.DeletedChannelEntity
+import dev.meghsohor.iptvtv.data.db.FailedChannelEntity
 import dev.meghsohor.iptvtv.data.db.IptvDatabase
 import dev.meghsohor.iptvtv.data.db.StreamUrlEntity
 import dev.meghsohor.iptvtv.data.remote.IptvOrgClient
@@ -55,6 +57,16 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
   suspend fun addBookmark(channelId: String) = db.bookmarkDao().add(BookmarkEntity(channelId, System.currentTimeMillis()))
 
   suspend fun removeBookmark(channelId: String) = db.bookmarkDao().remove(channelId)
+
+  /** Ids of channels whose every source failed the last time they were played. */
+  val failedChannelIds: Flow<List<String>> = db.failedChannelDao().observeIds()
+
+  suspend fun markFailed(channelId: String) = db.failedChannelDao().add(FailedChannelEntity(channelId, System.currentTimeMillis()))
+
+  suspend fun clearFailed(channelId: String) = db.failedChannelDao().remove(channelId)
+
+  /** Hides the channel from every list until the next refresh; its favourite comes back with it. */
+  suspend fun deleteChannel(channelId: String) = db.deletedChannelDao().add(DeletedChannelEntity(channelId))
 
   suspend fun setSelectedSource(channelId: String, url: String?) = db.channelDao().setSelectedSourceUrl(channelId, url)
 
@@ -150,6 +162,8 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
       for (chunk in removedIds.chunked(SqliteMaxBindVariables)) db.channelDao().deleteByIds(chunk) // cascades to stream_urls + bookmarks
       db.channelDao().upsertAll(built.channels)
       db.streamUrlDao().replaceAll(built.urlsByChannel)
+      db.deletedChannelDao().clear() // a refresh brings every deleted channel back
+      db.failedChannelDao().deleteOrphans()
     }
 
     return RefreshResult(added = addedCount, removed = removedIds.size, bookmarksRemoved = bookmarksRemovedCount)
