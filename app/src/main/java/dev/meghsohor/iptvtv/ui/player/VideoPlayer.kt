@@ -118,6 +118,7 @@ enum class PlayerCommand { TogglePlayPause, Play, Pause, ShowControls, HideContr
  * [controlsAllowed] = false keeps the controller hidden, since it would sit underneath the panel.
  * [controlsEdgeInset] keeps the bottom control row that far in from both screen edges.
  * [touchControls] makes play/pause tappable and adds volume/mute — TV remotes have keys for those.
+ * [onPlaybackActiveChange] reports whether the stream is meant to be playing: not paused, not failed.
  * [onAllSourcesFailed] fires when the error screen appears for a reason other than the device being
  * offline, [onPlaying] each time the stream reaches playback.
  *
@@ -134,6 +135,7 @@ fun VideoPlayer(
   touchControls: Boolean,
   onTap: () -> Boolean,
   onControlsVisibilityChange: (Boolean) -> Unit,
+  onPlaybackActiveChange: (Boolean) -> Unit,
   onAllSourcesFailed: () -> Unit,
   onPlaying: () -> Unit,
   onDeleteChannel: () -> Unit,
@@ -273,6 +275,10 @@ fun VideoPlayer(
     lifecycleOwner.lifecycle.addObserver(observer)
     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
   }
+
+  val playbackActive = playing && playbackError == null
+  val currentOnPlaybackActiveChange by rememberUpdatedState(onPlaybackActiveChange)
+  LaunchedEffect(playbackActive) { currentOnPlaybackActiveChange(playbackActive) }
 
   LaunchedEffect(muted, volume) { player.volume = if (muted) 0f else volume }
 
@@ -650,6 +656,9 @@ private fun OverlayButton(label: String, onClick: () -> Unit, primary: Boolean, 
   )
 }
 
+// Brand cyan, softened: at full strength it glared over the picture.
+private val PulseColor = MeghCyan.copy(alpha = 0.75f)
+
 /**
  * The centre "just played / just paused" effect: a thin-line icon that zooms in and fades out.
  * Nothing on first composition; each change of [trigger] replays it.
@@ -673,7 +682,7 @@ private fun PlayPausePulse(playing: Boolean, trigger: Int, modifier: Modifier = 
   ) {
     val stroke = Stroke(width = 2.dp.toPx(), join = StrokeJoin.Round, cap = StrokeCap.Round)
     drawCircle(MeghBackground.copy(alpha = 0.35f))
-    drawCircle(Color.White.copy(alpha = 0.9f), radius = size.minDimension / 2 - stroke.width, style = stroke)
+    drawCircle(PulseColor, radius = size.minDimension / 2 - stroke.width, style = stroke)
     val u = size.minDimension / 24f // icon drawn on a 24-unit grid
     if (playing) {
       val triangle = Path().apply {
@@ -682,10 +691,10 @@ private fun PlayPausePulse(playing: Boolean, trigger: Int, modifier: Modifier = 
         lineTo(9.5f * u, 16.5f * u)
         close()
       }
-      drawPath(triangle, Color.White, style = stroke)
+      drawPath(triangle, PulseColor, style = stroke)
     } else {
-      drawRoundRect(Color.White, topLeft = Offset(8.5f * u, 7.5f * u), size = Size(2.5f * u, 9f * u), cornerRadius = CornerRadius(u / 2), style = stroke)
-      drawRoundRect(Color.White, topLeft = Offset(13f * u, 7.5f * u), size = Size(2.5f * u, 9f * u), cornerRadius = CornerRadius(u / 2), style = stroke)
+      drawRoundRect(PulseColor, topLeft = Offset(8.5f * u, 7.5f * u), size = Size(2.5f * u, 9f * u), cornerRadius = CornerRadius(u / 2), style = stroke)
+      drawRoundRect(PulseColor, topLeft = Offset(13f * u, 7.5f * u), size = Size(2.5f * u, 9f * u), cornerRadius = CornerRadius(u / 2), style = stroke)
     }
   }
 }

@@ -4,8 +4,6 @@ import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -118,7 +116,6 @@ import dev.meghsohor.iptvtv.ui.player.PlayerCommand
 import dev.meghsohor.iptvtv.ui.player.VideoPlayer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -146,7 +143,9 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
   var activityTick by remember { mutableIntStateOf(0) }
   val lastActivityAt = remember { longArrayOf(SystemClock.uptimeMillis()) }
   var confirmRefresh by remember { mutableStateOf(false) }
+  var confirmExit by remember { mutableStateOf(false) }
   var searchFieldFocused by remember { mutableStateOf(false) }
+  var playbackActive by remember { mutableStateOf(false) }
   var menuChannel by remember { mutableStateOf<IndexedValue<ChannelEntity>?>(null) }
   var refocusAfterDelete by remember { mutableStateOf<IndexedValue<String>?>(null) }
   var playerControlsVisible by remember { mutableStateOf(false) }
@@ -187,9 +186,9 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
         viewModel.onBack()
         openPanel()
       }
-      // A real exit. Left to the system, Android 12+ only moves the task to the back, and reopening
-      // from the launcher would resume the last channel — the app would look like it autoplays.
-      else -> activity?.finish()
+      // Asks first, then exits for real (finish()): left to the system, Android 12+ only moves the task
+      // to the back, and reopening from the launcher would resume the last channel as if it autoplayed.
+      else -> confirmExit = true
     }
   }
 
@@ -198,7 +197,11 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
   // typing, since nothing but the timer closes the panel there and a result would play behind it.
   val refreshInProgress = state.refreshing || state.refreshMessage != null
   val searching = if (touchMode) isSearch(state.panel) else searchFieldFocused
-  val suppressAutoHide = refreshInProgress || confirmRefresh || menuChannel != null || searching
+  // Nothing to watch behind it, so no reason to hide: on touch while nothing is playing (none picked,
+  // paused, failed); on TV only before a channel is picked, since only the timer can move the panel
+  // off a paused picture or the error screen's buttons there.
+  val nothingToWatch = if (touchMode) !(hasPlayer && playbackActive) else !hasPlayer
+  val suppressAutoHide = refreshInProgress || confirmRefresh || menuChannel != null || confirmExit || searching || nothingToWatch
   LaunchedEffect(refreshInProgress) { if (refreshInProgress) panelOpen = true }
 
   LaunchedEffect(activityTick, suppressAutoHide, panelOpen) {
@@ -317,6 +320,7 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
           }
         },
         onControlsVisibilityChange = { playerControlsVisible = it },
+        onPlaybackActiveChange = { playbackActive = it },
         onAllSourcesFailed = { viewModel.onPlaybackFailed(currentChannel.id) },
         onPlaying = { viewModel.onPlaybackWorked(currentChannel.id) },
         onDeleteChannel = {
@@ -372,13 +376,27 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
     }
 
     if (confirmRefresh) {
-      ConfirmRefreshDialog(
+      ConfirmDialog(
+        title = "Refresh channels?",
+        message = "This downloads the latest channel list from iptv-org. Any channels you deleted will come back.",
+        confirmLabel = "Refresh",
         touchMode = touchMode,
         onConfirm = {
           confirmRefresh = false
           viewModel.onRefresh()
         },
         onDismiss = { confirmRefresh = false },
+      )
+    }
+
+    if (confirmExit) {
+      ConfirmDialog(
+        title = "Exit MeghTV?",
+        message = null,
+        confirmLabel = "Exit",
+        touchMode = touchMode,
+        onConfirm = { activity?.finish() },
+        onDismiss = { confirmExit = false },
       )
     }
 
@@ -684,27 +702,11 @@ private val ThumbActive = Color(0xFF4A5A8C)
 
 /**
  * Where you are in a long list: a thin thumb in the gutter right of the rows, sized from the share
- * of the list on screen. Shows while scrolling, a little brighter, and fades out as long after the
- * scroll stops as the panel's own timeout. Rows are near-equal height, so their average stands in
- * for real offsets. Positions are read in the draw phase only, so a scroll redraws, never recomposes.
+ * of the list on screen, a little brighter while scrolling. Rows are near-equal height, so their
+ * average stands in for real offsets. Read in the draw phase only, so a scroll redraws, never recomposes.
  */
-@Composable
-private fun Modifier.scrollIndicator(state: LazyListState): Modifier {
-  var shown by remember { mutableStateOf(false) }
-  LaunchedEffect(state) {
-    snapshotFlow { state.isScrollInProgress }.collectLatest { scrolling ->
-      if (scrolling) {
-        shown = true
-      } else {
-        delay(PanelAutoHideDelayMs)
-        shown = false
-      }
-    }
-  }
-  val alpha by animateFloatAsState(if (shown) 1f else 0f, tween(durationMillis = 300), label = "scrollIndicator")
-  return drawWithContent {
+private fun Modifier.scrollIndicator(state: LazyListState): Modifier = drawWithContent {
   drawContent()
-  if (alpha == 0f) return@drawWithContent
   val info = state.layoutInfo
   val visible = info.visibleItemsInfo
   if (visible.isEmpty() || !(state.canScrollForward || state.canScrollBackward)) return@drawWithContent
@@ -720,9 +722,7 @@ private fun Modifier.scrollIndicator(state: LazyListState): Modifier {
     topLeft = Offset(size.width + (RowGutter.toPx() - width) / 2, top),
     size = Size(width, thumb),
     cornerRadius = CornerRadius(width / 2),
-    alpha = alpha,
   )
-  }
 }
 
 /** Between two pinned tabs: a short line, not full height, so the tabs read as one group. */
@@ -1093,23 +1093,26 @@ private fun DialogCard(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun ConfirmRefreshDialog(touchMode: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
-  // Cancel first, so OK pressed twice doesn't bring back every deleted channel by accident.
+private fun ConfirmDialog(
+  title: String,
+  message: String?,
+  confirmLabel: String,
+  touchMode: Boolean,
+  onConfirm: () -> Unit,
+  onDismiss: () -> Unit,
+) {
+  // Cancel first, so OK (or Back) pressed twice can't confirm by accident.
   val cancelFocus = remember { FocusRequester() }
   Dialog(onDismissRequest = onDismiss) {
     // Inside the dialog: its content is composed in its own window, which isn't attached before this runs.
     LaunchedEffect(Unit) { if (!touchMode) cancelFocus.requestFocus() }
     DialogCard {
       Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Refresh channels?", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium)
-        Text(
-          "This downloads the latest channel list from iptv-org. Any channels you deleted will come back.",
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          style = MaterialTheme.typography.bodyMedium,
-        )
+        Text(title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium)
+        if (message != null) Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
         Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
           DialogButton("Cancel", onClick = onDismiss, modifier = Modifier.focusRequester(cancelFocus))
-          DialogButton("Refresh", onClick = onConfirm)
+          DialogButton(confirmLabel, onClick = onConfirm)
         }
       }
     }
@@ -1132,7 +1135,7 @@ private fun ChannelMenuDialog(
   // first option. Keys count only from the first fresh press.
   var armed by remember { mutableStateOf(false) }
   Dialog(onDismissRequest = onDismiss) {
-    LaunchedEffect(Unit) { if (!touchMode) firstFocus.requestFocus() } // inside the dialog, as in ConfirmRefreshDialog
+    LaunchedEffect(Unit) { if (!touchMode) firstFocus.requestFocus() } // inside the dialog, as in ConfirmDialog
     DialogCard {
       Column(
         Modifier.padding(16.dp).onPreviewKeyEvent { event ->
