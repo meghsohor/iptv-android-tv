@@ -214,7 +214,7 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     searchQuery.value = query
   }
 
-  /** Up one level; a no-op at the top (Categories), where the screen exits instead. */
+  /** Up one level; a no-op at the top (Categories). */
   fun onBack() {
     panel.value = panel.value.backTarget()
   }

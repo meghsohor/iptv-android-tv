@@ -80,6 +80,7 @@ import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -170,10 +171,10 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
     activityTick++
   }
 
-  // Back peels off one layer at a time: player controls, then brings a hidden panel back, and only
-  // once the panel is visible does it walk up a level. On Android 13+ one press can land here twice
-  // (the key event forwarded below, then the platform's own back callback) — the echo is ignored,
-  // or a single press would both reveal the panel and navigate up.
+  // Back peels off one layer at a time: the player controls, then the panel, then it asks to exit.
+  // Levels inside the panel go up through its ← heading, or D-pad Left on a row. On Android 13+ one
+  // press can land here twice (the key event forwarded below, then the platform's own back callback)
+  // — the echo is ignored, or one press would act twice.
   val lastBackAt = remember { longArrayOf(0L) }
   BackHandler {
     val now = SystemClock.uptimeMillis()
@@ -181,11 +182,7 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
     lastBackAt[0] = now
     when {
       !panelOpen && playerControlsVisible -> playerCommands.tryEmit(PlayerCommand.HideControls)
-      !panelOpen -> openPanel()
-      state.panel != PanelState.CategoriesMenu -> {
-        viewModel.onBack()
-        openPanel()
-      }
+      panelOpen -> panelOpen = false
       // Asks first, then exits for real (finish()): left to the system, Android 12+ only moves the task
       // to the back, and reopening from the launcher would resume the last channel as if it autoplayed.
       else -> confirmExit = true
@@ -725,6 +722,24 @@ private fun Modifier.scrollIndicator(state: LazyListState): Modifier = drawWithC
   )
 }
 
+/**
+ * D-pad Left on the row itself goes up a level, like the ← heading. Only on the row: Left from the
+ * favourite star bubbles through here too, and there it has to move focus back to the row.
+ */
+@Composable
+private fun Modifier.leftGoesUp(interaction: MutableInteractionSource, onNavigateUp: (() -> Unit)?): Modifier {
+  if (onNavigateUp == null) return this
+  val focused by interaction.collectIsFocusedAsState()
+  return onKeyEvent { event ->
+    if (focused && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+      onNavigateUp()
+      true
+    } else {
+      false
+    }
+  }
+}
+
 /** Between two pinned tabs: a short line, not full height, so the tabs read as one group. */
 @Composable
 private fun PinnedDivider(vertical: Boolean) {
@@ -804,6 +819,7 @@ private fun CountriesMenuContent(
         PlainRow(
           "${country.flag}  ${country.name}",
           onClick = { onCountry(i, country) },
+          onNavigateUp = onBack,
           modifier = if (i == focusIndex) Modifier.focusRequester(focusRequester) else Modifier,
         )
       }
@@ -884,6 +900,8 @@ private fun ChannelListContent(
             onSelectChannel(channel.id)
           },
           onToggleBookmark = { onToggleBookmark(channel) },
+          // Favourites and Search are top-level tabs; there's no level above them to go up to.
+          onNavigateUp = if (isSearch || source == ChannelListSource.Favourites) null else onBack,
         )
       }
     }
@@ -988,11 +1006,12 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, autoFocu
 }
 
 @Composable
-private fun PlainRow(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun PlainRow(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, onNavigateUp: (() -> Unit)? = null) {
   val interaction = remember { MutableInteractionSource() }
   Row(
     modifier
       .fillMaxWidth()
+      .leftGoesUp(interaction, onNavigateUp)
       .panelRow(interaction, onClick = onClick)
       .heightIn(min = 48.dp)
       .padding(horizontal = 16.dp),
@@ -1012,6 +1031,7 @@ private fun ChannelRow(
   onClick: () -> Unit,
   onLongClick: () -> Unit,
   onToggleBookmark: () -> Unit,
+  onNavigateUp: (() -> Unit)?,
   modifier: Modifier = Modifier,
 ) {
   val interaction = remember { MutableInteractionSource() }
@@ -1024,6 +1044,7 @@ private fun ChannelRow(
       // into — without an explicit link, Right from the row went nowhere and the star was touch-only.
       .focusRequester(rowFocus)
       .focusProperties { right = starFocus }
+      .leftGoesUp(interaction, onNavigateUp)
       .panelRow(interaction, selected = playing, dimmed = failed, onLongClick = onLongClick, onClick = onClick)
       .semantics { if (failed) stateDescription = "Not working" }
       .heightIn(min = 48.dp)
