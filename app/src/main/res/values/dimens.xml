@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Overrides Media3's 8dp: its settings and CC popups sit this far in from the player's bottom-right
+         corner. At 8dp they covered the 60dp control row; at 68dp they sit above it, over the settings button. -->
+    <dimen name="exo_settings_offset">68dp</dimen>
+</resources>

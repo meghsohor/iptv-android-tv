@@ -3,6 +3,7 @@ package dev.meghsohor.iptvtv.ui.player
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
@@ -14,7 +15,12 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -27,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -52,7 +59,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -99,9 +114,12 @@ enum class PlayerCommand { TogglePlayPause, Play, Pause, ShowControls, HideContr
  * silent — an error overlay with a Retry button takes over.
  *
  * A tap on the video goes to [onTap] first — returning true means the caller used it (e.g. to
- * close the side panel); otherwise a tap on visible controls plays/pauses, and on bare video shows them.
+ * close the side panel); otherwise it shows or hides the controls.
  * [controlsAllowed] = false keeps the controller hidden, since it would sit underneath the panel.
- * [touchControls] adds the on-screen volume/mute — TV remotes have hardware volume for that.
+ * [controlsEdgeInset] keeps the bottom control row that far in from both screen edges.
+ * [touchControls] makes play/pause tappable and adds volume/mute — TV remotes have keys for those.
+ * [onAllSourcesFailed] fires when the error screen appears for a reason other than the device being
+ * offline, [onPlaying] each time the stream reaches playback.
  *
  * [channelId] identifies the channel independently of [streamUrls] — two different channels can
  * legitimately expose the exact same mirror list (duplicate source entries happen in iptv-org's
@@ -116,8 +134,12 @@ fun VideoPlayer(
   touchControls: Boolean,
   onTap: () -> Boolean,
   onControlsVisibilityChange: (Boolean) -> Unit,
+  onAllSourcesFailed: () -> Unit,
+  onPlaying: () -> Unit,
+  onDeleteChannel: () -> Unit,
   modifier: Modifier = Modifier,
   overlayEndPadding: Dp = 0.dp,
+  controlsEdgeInset: Dp = 0.dp,
   playerCommands: Flow<PlayerCommand> = emptyFlow(),
 ) {
   val context = LocalContext.current
@@ -152,11 +174,16 @@ fun VideoPlayer(
   var controlsVisible by remember { mutableStateOf(false) }
   var playerView by remember { mutableStateOf<PlayerView?>(null) }
   var muted by remember { mutableStateOf(false) }
+  var playing by remember { mutableStateOf(true) }
+  // Bumped on each play/pause by the user; the centre icon replays its animation per bump.
+  var pulse by remember { mutableIntStateOf(0) }
   var volume by remember { mutableFloatStateOf(1f) }
   val currentStreamUrls by rememberUpdatedState(streamUrls)
   val currentOnTap by rememberUpdatedState(onTap)
   val currentControlsAllowed by rememberUpdatedState(controlsAllowed)
   val currentOnControlsVisibilityChange by rememberUpdatedState(onControlsVisibilityChange)
+  val currentOnAllSourcesFailed by rememberUpdatedState(onAllSourcesFailed)
+  val currentOnPlaying by rememberUpdatedState(onPlaying)
   val liveRejoins = remember { intArrayOf(0) }
 
   // Each change to `attempt` relaunches the load effect; a final failure leaves it alone, so
@@ -170,6 +197,7 @@ fun VideoPlayer(
         attempt.index + 1 < currentStreamUrls.size -> SourceAttempt(attempt.index + 1) // next mirror, silently
         else -> {
           playbackError = error // every mirror failed (or there was only ever one) — stop hiding it
+          if (!context.isOffline(error)) currentOnAllSourcesFailed()
           return
         }
       }
@@ -190,9 +218,11 @@ fun VideoPlayer(
           onSourceFailed(error)
         }
 
-        // Paused, the controls stay up (so the next tap resumes); playing, they time out as usual.
+        // Paused, the controls stay up and the picture is dimmed; playing, they time out as usual.
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+          playing = playWhenReady
           val view = playerView ?: return
+          view.findViewById<View>(Media3R.id.exo_controls_background)?.background = edgeScrim(view.resources.displayMetrics.density, dimmed = !playWhenReady)
           view.controllerShowTimeoutMs = if (playWhenReady) ControlsAutoHideMs else 0
           if (view.isControllerFullyVisible) view.showController() // re-arm with the new timeout
         }
@@ -206,7 +236,10 @@ fun VideoPlayer(
           val state = player.playbackState
           keepScreenOn = player.playWhenReady && state != Player.STATE_IDLE && state != Player.STATE_ENDED
           buffering = state == Player.STATE_BUFFERING
-          if (state == Player.STATE_READY) liveRejoins[0] = 0
+          if (state == Player.STATE_READY && events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
+            liveRejoins[0] = 0
+            currentOnPlaying()
+          }
         }
       }
     player.addListener(listener)
@@ -243,20 +276,21 @@ fun VideoPlayer(
 
   LaunchedEffect(muted, volume) { player.volume = if (muted) 0f else volume }
 
+  fun setPlaying(play: Boolean) {
+    if (player.playWhenReady == play) return
+    player.playWhenReady = play
+    pulse++
+    if (currentControlsAllowed && playbackError == null) playerView?.showController() // so the new state is visible
+  }
+
   LaunchedEffect(player, playerCommands) {
     playerCommands.collect { command ->
       when (command) {
         PlayerCommand.HideControls -> playerView?.hideController()
         PlayerCommand.ShowControls -> if (currentControlsAllowed && playbackError == null) playerView?.showController()
-        PlayerCommand.Play, PlayerCommand.Pause, PlayerCommand.TogglePlayPause -> {
-          player.playWhenReady =
-            when (command) {
-              PlayerCommand.Play -> true
-              PlayerCommand.Pause -> false
-              else -> !player.playWhenReady
-            }
-          if (currentControlsAllowed) playerView?.showController() // so the new play/pause state is visible
-        }
+        PlayerCommand.Play -> setPlaying(true)
+        PlayerCommand.Pause -> setPlaying(false)
+        PlayerCommand.TogglePlayPause -> setPlaying(!player.playWhenReady)
       }
     }
   }
@@ -324,21 +358,20 @@ fun VideoPlayer(
           setShowPreviousButton(false)
           setShowNextButton(false)
           setShowSubtitleButton(false) // until the stream turns out to carry captions — see onTracksChanged
+          // Play/pause lives in the bottom row instead (see ControlsRow); the centre only gets PlayPausePulse.
+          findViewById<View>(Media3R.id.exo_center_controls)?.visibility = View.GONE
           // No built-in setter for the time bar itself — hide it and the whole time block (position, "·", duration) directly.
           findViewById<View>(Media3R.id.exo_progress)?.visibility = View.GONE
           findViewById<View>(Media3R.id.exo_time)?.visibility = View.GONE
 
-          // Media3's controller has no theme hook, so recolor the kept pieces directly. PlayPause
-          // has no background of its own (the theme's default ImageButton one showed through and
-          // tinted muddy), so it gets an explicit circle instead.
-          findViewById<ImageButton>(Media3R.id.exo_play_pause)?.apply {
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(MeghCyan.toArgb()) }
-            imageTintList = ColorStateList.valueOf(MeghBackground.toArgb())
-          }
+          // Media3's controller has no theme hook, so recolor the kept pieces directly.
           findViewById<ImageButton>(Media3R.id.exo_subtitle)?.imageTintList = ColorStateList.valueOf(MeghCyan.toArgb())
           findViewById<ImageButton>(Media3R.id.exo_settings)?.imageTintList = ColorStateList.valueOf(MeghCyan.toArgb())
-          findViewById<View>(Media3R.id.exo_controls_background)?.background = edgeScrim(resources.displayMetrics.density)
-          findViewById<View>(Media3R.id.exo_bottom_bar)?.setBackgroundColor(android.graphics.Color.TRANSPARENT)
+          findViewById<View>(Media3R.id.exo_controls_background)?.background = edgeScrim(resources.displayMetrics.density, dimmed = false)
+          findViewById<View>(Media3R.id.exo_bottom_bar)?.apply {
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+            setPadding(0, 0, (controlsEdgeInset.value * resources.displayMetrics.density).toInt(), 0) // the bar is always LTR
+          }
 
           setControllerVisibilityListener(
             PlayerView.ControllerVisibilityListener { visibility ->
@@ -346,25 +379,16 @@ fun VideoPlayer(
               currentOnControlsVisibilityChange(controlsVisible)
             }
           )
-          fun togglePlayPause(view: PlayerView) {
-            player.playWhenReady = !player.playWhenReady
-            if (currentControlsAllowed) view.showController() // so the new play/pause state is visible
-          }
-          // With the menu open a tap (or double tap) only closes it; otherwise a tap on the controls
-          // overlay plays/pauses, on bare video brings the controls up, and a double tap plays/pauses.
-          installTapHandler(
-            onTap = { view ->
-              if (!currentOnTap()) {
-                when {
-                  playbackError != null -> Unit // only Retry means anything on the error screen
-                  view.isControllerFullyVisible -> togglePlayPause(view)
-                  currentControlsAllowed -> view.showController()
-                }
+          // With the menu open a tap only closes it; otherwise it shows or hides the controls.
+          installTapHandler { view ->
+            if (!currentOnTap()) {
+              when {
+                playbackError != null -> Unit // only the error screen's buttons mean anything there
+                view.isControllerFullyVisible -> view.hideController()
+                currentControlsAllowed -> view.showController()
               }
-            },
-            // With the menu open, a double tap is two taps on the video: it closes the menu, nothing more.
-            onDoubleTap = { view -> if (!currentOnTap() && playbackError == null) togglePlayPause(view) },
-          )
+            }
+          }
           playerView = this
         }
       },
@@ -375,8 +399,11 @@ fun VideoPlayer(
       },
     )
 
-    if (touchControls && controlsVisible && playbackError == null) {
-      VolumeControls(
+    if (controlsVisible && playbackError == null) {
+      ControlsRow(
+        playing = playing,
+        onTogglePlay = { setPlaying(!player.playWhenReady) },
+        touchControls = touchControls,
         muted = muted || volume == 0f,
         volume = volume,
         onToggleMute = {
@@ -393,12 +420,16 @@ fun VideoPlayer(
         },
         onTouch = ::keepControlsAlive,
         // Sits in the left half of Media3's 60dp bottom bar, where its (hidden) time labels would be.
-        modifier = Modifier.align(Alignment.BottomStart).height(60.dp).padding(start = 8.dp),
+        // Excluded from the back-swipe zone at the screen edge, which otherwise swallowed taps on play/pause.
+        modifier = Modifier.align(Alignment.BottomStart).height(60.dp).systemGestureExclusion().padding(start = controlsEdgeInset),
       )
     }
 
-    // No pointer handling, so it never blocks a tap; hidden while the controller's own centre button is up.
-    if (buffering && playbackError == null && !controlsVisible) {
+    // End padding keeps it in the middle of the part of the video the side panel isn't covering.
+    PlayPausePulse(playing = playing, trigger = pulse, modifier = Modifier.align(Alignment.Center).padding(end = overlayEndPadding))
+
+    // No pointer handling, so it never blocks a tap.
+    if (buffering && playbackError == null) {
       CircularProgressIndicator(
         color = MeghCyan,
         strokeWidth = 3.dp,
@@ -411,7 +442,8 @@ fun VideoPlayer(
       PlaybackErrorOverlay(
         // Mostly asked of the device, since one unreachable stream server times out exactly like a
         // dead connection does. But an HTTP error status means a server answered: never "offline".
-        offline = remember(error) { error.errorCode != PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && !context.hasInternet() },
+        offline = remember(error) { context.isOffline(error) },
+        onDelete = onDeleteChannel,
         onRetry = {
           attempt = SourceAttempt()
           playbackError = null
@@ -427,16 +459,17 @@ fun VideoPlayer(
 
 /**
  * Netflix/Prime-style scrim behind the controls: dark at the top (under the channel badge) and the
- * bottom (under the control row), with the middle of the picture left clear rather than dimmed.
+ * bottom (under the control row). The middle is clear while playing and [dimmed] while paused.
  */
-private fun edgeScrim(density: Float): Drawable {
+private fun edgeScrim(density: Float, dimmed: Boolean): Drawable {
   fun fade(orientation: GradientDrawable.Orientation, alpha: Float) =
     GradientDrawable(orientation, intArrayOf(MeghBackground.copy(alpha = alpha).toArgb(), android.graphics.Color.TRANSPARENT))
-  return LayerDrawable(arrayOf(fade(GradientDrawable.Orientation.TOP_BOTTOM, 0.7f), fade(GradientDrawable.Orientation.BOTTOM_TOP, 0.85f))).apply {
-    setLayerGravity(0, Gravity.TOP)
-    setLayerHeight(0, (120 * density).toInt())
-    setLayerGravity(1, Gravity.BOTTOM)
-    setLayerHeight(1, (160 * density).toInt())
+  val dim = ColorDrawable(if (dimmed) MeghBackground.copy(alpha = 0.55f).toArgb() else android.graphics.Color.TRANSPARENT)
+  return LayerDrawable(arrayOf(dim, fade(GradientDrawable.Orientation.TOP_BOTTOM, 0.7f), fade(GradientDrawable.Orientation.BOTTOM_TOP, 0.85f))).apply {
+    setLayerGravity(1, Gravity.TOP)
+    setLayerHeight(1, (120 * density).toInt())
+    setLayerGravity(2, Gravity.BOTTOM)
+    setLayerHeight(2, (160 * density).toInt())
   }
 }
 
@@ -450,12 +483,11 @@ private data class SourceAttempt(val index: Int = 0, val asHls: Boolean = false)
 private fun String.looksLikeHls() = substringBefore('?').contains(".m3u8", ignoreCase = true)
 
 /**
- * Single tap (confirmed only once it can't be the first half of a double tap) and double tap,
- * ignoring drags. Consumes every touch, so PlayerView's own click-to-toggle never runs alongside
- * ours; touches on the controller's buttons are handled by those buttons and never reach this.
+ * Taps, ignoring drags. Consumes every touch, so PlayerView's own click-to-toggle never runs
+ * alongside ours; touches on the controller's buttons are handled by those buttons and never reach this.
  */
 @SuppressLint("ClickableViewAccessibility")
-private fun PlayerView.installTapHandler(onTap: (PlayerView) -> Unit, onDoubleTap: (PlayerView) -> Unit) {
+private fun PlayerView.installTapHandler(onTap: (PlayerView) -> Unit) {
   val view = this
   val detector =
     GestureDetector(
@@ -463,17 +495,15 @@ private fun PlayerView.installTapHandler(onTap: (PlayerView) -> Unit, onDoubleTa
       object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(e: MotionEvent) = true
 
-        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
+        // On tap-up, not "confirmed": with no double tap to wait for, that would only add ~300 ms.
+        override fun onSingleTapUp(e: MotionEvent): Boolean {
           onTap(view)
-          return true
-        }
-
-        override fun onDoubleTap(e: MotionEvent): Boolean {
-          onDoubleTap(view)
           return true
         }
       },
     )
+      // The listener also implements double-tap, which would swallow a quick second tap; nothing uses it.
+      .apply { setOnDoubleTapListener(null) }
   setOnTouchListener { _, event ->
     detector.onTouchEvent(event)
     true
@@ -482,7 +512,10 @@ private fun PlayerView.installTapHandler(onTap: (PlayerView) -> Unit, onDoubleTa
 
 @OptIn(ExperimentalMaterial3Api::class) // Slider's track slot
 @Composable
-private fun VolumeControls(
+private fun ControlsRow(
+  playing: Boolean,
+  onTogglePlay: () -> Unit,
+  touchControls: Boolean,
   muted: Boolean,
   volume: Float,
   onToggleMute: () -> Unit,
@@ -502,6 +535,19 @@ private fun VolumeControls(
     },
     verticalAlignment = Alignment.CenterVertically,
   ) {
+    // On TV it only shows the state (OK and the media keys toggle it): not clickable, so never a D-pad stop.
+    Box(
+      Modifier.size(48.dp).clip(CircleShape).then(if (touchControls) Modifier.clickable(onClick = onTogglePlay) else Modifier),
+      contentAlignment = Alignment.Center,
+    ) {
+      Icon(
+        if (playing) MeghIcons.Pause else MeghIcons.Play,
+        contentDescription = if (playing) "Pause" else "Play",
+        tint = MeghCyan,
+        modifier = Modifier.size(30.dp),
+      )
+    }
+    if (!touchControls) return@Row
     Box(
       Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onToggleMute),
       contentAlignment = Alignment.Center,
@@ -534,7 +580,14 @@ private fun VolumeControls(
 }
 
 @Composable
-private fun PlaybackErrorOverlay(offline: Boolean, onRetry: () -> Unit, endPadding: Dp, focusRetry: Boolean, modifier: Modifier = Modifier) {
+private fun PlaybackErrorOverlay(
+  offline: Boolean,
+  onRetry: () -> Unit,
+  onDelete: () -> Unit,
+  endPadding: Dp,
+  focusRetry: Boolean,
+  modifier: Modifier = Modifier,
+) {
   val retryFocusRequester = remember { FocusRequester() }
   // Straight to Retry when it's the only thing on screen — but not while the side panel is open,
   // where it would pull D-pad focus out of the list being browsed.
@@ -553,10 +606,19 @@ private fun PlaybackErrorOverlay(offline: Boolean, onRetry: () -> Unit, endPaddi
         color = MeghOnSurfaceMuted,
         style = MaterialTheme.typography.bodyMedium,
       )
-      RetryButton(onClick = onRetry, modifier = Modifier.focusRequester(retryFocusRequester))
+      Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        OverlayButton("Retry", onClick = onRetry, primary = true, modifier = Modifier.focusRequester(retryFocusRequester))
+        // Offline says nothing about the channel, so no Delete there.
+        if (!offline) OverlayButton("Delete channel", onClick = onDelete, primary = false)
+      }
     }
   }
 }
+
+/** Mostly asked of the device, since one unreachable stream server times out exactly like a dead
+ * connection does. But an HTTP error status means a server answered: never "offline". */
+private fun Context.isOffline(error: PlaybackException) =
+  error.errorCode != PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && !hasInternet()
 
 private fun Context.hasInternet(): Boolean {
   val connectivity = getSystemService(ConnectivityManager::class.java) ?: return true
@@ -567,20 +629,63 @@ private fun Context.hasInternet(): Boolean {
 }
 
 @Composable
-private fun RetryButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun OverlayButton(label: String, onClick: () -> Unit, primary: Boolean, modifier: Modifier = Modifier) {
   val interaction = remember { MutableInteractionSource() }
   val focused by interaction.collectIsFocusedAsState()
+  val shape = RoundedCornerShape(8.dp)
   Text(
-    "Retry",
-    color = MeghBackground,
+    label,
+    color = if (primary) MeghBackground else Color.White,
     style = MaterialTheme.typography.titleSmall,
     modifier =
       modifier
-        .padding(top = 8.dp)
-        .clip(RoundedCornerShape(8.dp))
-        .background(if (focused) MeghCyan else MeghCyan.copy(alpha = 0.85f))
+        .clip(shape)
+        .then(
+          if (primary) Modifier.background(if (focused) MeghCyan else MeghCyan.copy(alpha = 0.85f))
+          else Modifier.background(if (focused) Color.White.copy(alpha = 0.18f) else Color.Transparent).border(1.dp, Color.White.copy(alpha = if (focused) 0.9f else 0.4f), shape)
+        )
         .clickable(interactionSource = interaction, indication = null, onClick = onClick)
         .focusable(interactionSource = interaction)
         .padding(horizontal = 24.dp, vertical = 10.dp),
   )
+}
+
+/**
+ * The centre "just played / just paused" effect: a thin-line icon that zooms in and fades out.
+ * Nothing on first composition; each change of [trigger] replays it.
+ */
+@Composable
+private fun PlayPausePulse(playing: Boolean, trigger: Int, modifier: Modifier = Modifier) {
+  val progress = remember { Animatable(1f) }
+  LaunchedEffect(trigger) {
+    if (trigger == 0) return@LaunchedEffect
+    progress.snapTo(0f)
+    progress.animateTo(1f, tween(durationMillis = 650, easing = LinearOutSlowInEasing))
+  }
+  if (progress.value >= 1f) return
+  Canvas(
+    modifier.size(96.dp).graphicsLayer {
+      val p = progress.value
+      scaleX = 0.7f + 0.5f * p
+      scaleY = scaleX
+      alpha = ((1f - p) / 0.7f).coerceAtMost(1f) // holds full strength for the first 30%
+    }
+  ) {
+    val stroke = Stroke(width = 2.dp.toPx(), join = StrokeJoin.Round, cap = StrokeCap.Round)
+    drawCircle(MeghBackground.copy(alpha = 0.35f))
+    drawCircle(Color.White.copy(alpha = 0.9f), radius = size.minDimension / 2 - stroke.width, style = stroke)
+    val u = size.minDimension / 24f // icon drawn on a 24-unit grid
+    if (playing) {
+      val triangle = Path().apply {
+        moveTo(9.5f * u, 7.5f * u)
+        lineTo(17f * u, 12f * u)
+        lineTo(9.5f * u, 16.5f * u)
+        close()
+      }
+      drawPath(triangle, Color.White, style = stroke)
+    } else {
+      drawRoundRect(Color.White, topLeft = Offset(8.5f * u, 7.5f * u), size = Size(2.5f * u, 9f * u), cornerRadius = CornerRadius(u / 2), style = stroke)
+      drawRoundRect(Color.White, topLeft = Offset(13f * u, 7.5f * u), size = Size(2.5f * u, 9f * u), cornerRadius = CornerRadius(u / 2), style = stroke)
+    }
+  }
 }

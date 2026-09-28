@@ -27,6 +27,8 @@ data class TvHomeUiState(
   /** Null while the current [panel]'s list is still loading. */
   val listChannels: List<ChannelEntity>? = null,
   val bookmarkedIds: Set<String> = emptySet(),
+  /** Channels whose every source failed the last time they were played. */
+  val failedIds: Set<String> = emptySet(),
   val currentChannel: ChannelEntity? = null,
   val currentStreamUrls: List<String> = emptyList(),
   val searchQuery: String = "",
@@ -64,6 +66,8 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     }
 
   private val bookmarkedIds = repository.bookmarkedChannels.map { list -> list.map { it.id }.toSet() }
+  private val failedIds =
+    repository.failedChannelIds.map { it.toSet() }.stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
 
   private data class BrowseState(
     val panel: PanelState,
@@ -72,39 +76,46 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     val countries: List<CountryEntity>,
     val listChannels: List<ChannelEntity>?,
     val bookmarkedIds: Set<String>,
+    val failedIds: Set<String>,
   )
 
-  private data class PlayerState(val currentChannel: ChannelEntity?, val currentStreamUrls: List<String>)
+  /** [requestedId] tells "nothing picked" (null) apart from "picked, but its row is gone for now". */
+  private data class PlayerState(val requestedId: String?, val currentChannel: ChannelEntity?, val currentStreamUrls: List<String>)
 
   private val startupPanelChosen = MutableStateFlow(false)
 
   private val browseState =
-    combine(combine(panel, startupPanelChosen, ::Pair), repository.categories, repository.countries, listChannels, bookmarkedIds) {
-      (p, chosen), cats, countries, loaded, bm ->
+    combine(
+      combine(panel, startupPanelChosen, ::Pair),
+      repository.categories,
+      repository.countries,
+      listChannels,
+      combine(bookmarkedIds, failedIds, ::Pair),
+    ) { (p, chosen), cats, countries, loaded, (bm, failed) ->
       // Right after a panel change, the previous panel's list is still the latest one loaded —
       // report "loading" rather than show it (and its count) under the new heading.
-      BrowseState(p, chosen, cats, countries, loaded.channels.takeIf { loaded.panel == p }, bm)
+      BrowseState(p, chosen, cats, countries, loaded.channels.takeIf { loaded.panel == p }, bm, failed)
     }
 
   private val playerState =
     currentChannelId
       .flatMapLatest { id ->
         if (id == null) {
-          flowOf(PlayerState(null, emptyList()))
+          flowOf(PlayerState(null, null, emptyList()))
         } else {
           combine(repository.channelById(id), repository.streamUrls(id)) { channel, urls ->
-            if (channel == null) PlayerState(null, emptyList())
-            else PlayerState(channel, orderedByPreference(urls.map { it.url }, channel.selectedSourceUrl))
+            if (channel == null) PlayerState(id, null, emptyList())
+            else PlayerState(id, channel, orderedByPreference(urls.map { it.url }, channel.selectedSourceUrl))
           }
         }
       }
       // A refresh can cascade-delete the row for whatever's currently playing (or channel zap can
       // land on an id a refresh just removed) — keep the last known-good channel/URLs instead of
       // dropping to the "nothing playing" banner mid-watch; refresh only updates the dataset.
-      .runningReduce { previous, new -> if (new.currentChannel == null) previous else new }
+      .runningReduce { previous, new -> if (new.requestedId != null && new.currentChannel == null) previous else new }
       // Shared for the ViewModel's lifetime: uiState stops collecting 5 s into the background, and a
       // restarted chain would have no "last good" state to fall back on, tearing the player down.
-      .stateIn(viewModelScope, SharingStarted.Eagerly, PlayerState(null, emptyList()))
+      .stateIn(viewModelScope, SharingStarted.Eagerly, PlayerState(null, null, emptyList()))
 
   val uiState =
     combine(browseState, playerState, searchQuery, refreshing, refreshMessage) { browse, player, query, isRefreshing, message ->
@@ -115,6 +126,7 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
           countries = browse.countries,
           listChannels = browse.listChannels,
           bookmarkedIds = browse.bookmarkedIds,
+          failedIds = browse.failedIds,
           currentChannel = player.currentChannel,
           currentStreamUrls = player.currentStreamUrls,
           searchQuery = query,
@@ -136,9 +148,17 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     }
   }
 
+  /** Deleted since the last refresh. Ignored even while a list still shows them: the delete is written asynchronously. */
+  private val deletedIds = mutableSetOf<String>()
+
+  /** Where a deleted playing channel sat in [currentPlaybackList], so Channel Up/Down carry on from there. */
+  private var zapGap: Int? = null
+
   fun onSelectChannel(channelId: String) {
+    if (channelId in deletedIds) return
+    zapGap = null
     currentChannelId.value = channelId
-    currentPlaybackList.value = uiState.value.listChannels.orEmpty().map { it.id }
+    currentPlaybackList.value = uiState.value.listChannels.orEmpty().map { it.id }.filterNot { it in deletedIds }
   }
 
   /** Steps to the next/previous channel within [currentPlaybackList], wrapping at either end. Doesn't touch panel/nav state. */
@@ -148,9 +168,17 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
 
   private fun stepChannel(delta: Int) {
     val list = currentPlaybackList.value
+    if (list.isEmpty()) return
     val index = list.indexOf(currentChannelId.value)
-    if (index == -1) return
-    currentChannelId.value = list[(index + delta).mod(list.size)]
+    val gap = zapGap
+    val next =
+      when {
+        index != -1 -> index + delta
+        gap != null -> if (delta > 0) gap else gap - 1 // the deleted channel's neighbours
+        else -> return
+      }
+    zapGap = null
+    currentChannelId.value = list[next.mod(list.size)]
   }
 
   fun onSelectCategoryRow(category: CategoryEntity) {
@@ -197,6 +225,26 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     }
   }
 
+  /** Every source of [channelId] failed. */
+  fun onPlaybackFailed(channelId: String) {
+    viewModelScope.launch { repository.markFailed(channelId) }
+  }
+
+  /** [channelId] reached playback; only writes when it carried a failed mark. */
+  fun onPlaybackWorked(channelId: String) {
+    if (channelId in failedIds.value) viewModelScope.launch { repository.clearFailed(channelId) }
+  }
+
+  fun onDeleteChannel(channelId: String) {
+    deletedIds += channelId
+    if (currentChannelId.value == channelId) {
+      zapGap = currentPlaybackList.value.indexOf(channelId).takeIf { it >= 0 }
+      currentChannelId.value = null
+    }
+    currentPlaybackList.value -= channelId
+    viewModelScope.launch { repository.deleteChannel(channelId) }
+  }
+
   fun onRefresh() {
     if (refreshing.value) return
     viewModelScope.launch {
@@ -209,6 +257,7 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
           onFailure = { e -> "Refresh failed: ${e.message}" },
         )
       if (result.isSuccess) {
+        deletedIds.clear() // the refresh brought them back
         // A refresh can remove channels; drop any that were in the zap list so stepping through
         // it can't land on an id that no longer exists. The playing one stays even if removed (it
         // keeps playing), or Channel Up/Down would have nothing to step from.
