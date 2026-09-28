@@ -1,12 +1,14 @@
 # AGENTS.md
 
-Operational notes for any AI agent working in this repo — the stuff that isn't in the README because it's about environment/tooling quirks and hard-won gotchas, not the app itself. Read [`README.md`](README.md) first for what the app does before touching navigation/data-layer behavior.
+Operational notes for any AI agent working in this repo — the stuff that isn't in the README because it's about environment/tooling quirks and hard-won gotchas, not the app itself. The README only lists the main features; the detailed navigation and playback behaviour is documented in comments in `TvHomeScreen.kt`, `VideoPlayer.kt` and `TvHomeViewModel.kt`.
 
-## Current status (as of 2026-09-25)
+## Current status (as of 2026-09-28)
 
-- The app runs on both Android TV (D-pad) and Android phones (touch, landscape) — verified on the `tv_1080p` and `medium_phone` emulators against real iptv-org data. See the README's Features section for what's built.
-- PRs #1 (branding + release gating), #2 (CI check) and #3 (panel auto-hide, channel zap, captions, style) are merged; releases `v1.1` and `v1.2` are published.
-- Branch `mobile-layout-and-touch-fixes` — phone/touch support, player controls, TV remote fixes, performance work, README banner — bumps to `1.3`/versionCode 4, so merging it publishes `v1.3`.
+- The app runs on both Android TV (D-pad) and Android phones (touch, landscape) — verified on the `tv_1080p` and `medium_phone` emulators against real iptv-org data.
+- PRs #1–#4 are merged; releases up to `v1.3` are published.
+- Branch `player-controls-and-channel-cleanup` bumps to `1.4`/versionCode 5, so merging it publishes `v1.4`: a play/pause button instead of tap-to-pause, a paused dim and a centre play/pause animation, a 7 s panel auto-hide on phone and TV, a scroll indicator, "not working" marks on channels whose sources all failed, channel delete (long-press / hold OK, or from the error screen), a refresh confirmation, and a restyled panel (Outfit font, line icons).
+- The database is at version 2 (`failed_channels` and `deleted_channels` tables). `IptvDatabase` has a hand-written 1→2 migration; any further schema change needs its own migration, or upgrading users lose their favourites.
+- Next: a tests PR (TV key routing, ViewModel startup and channel zap, DAO ordering and pruning).
 
 ## Dev environment — command-line only, no Android Studio
 
@@ -20,6 +22,8 @@ Operational notes for any AI agent working in this repo — the stuff that isn't
 
 - **Always cold-boot** (`android emulator start --cold <avd>`, or `emulator -avd <avd> -no-snapshot-load`). A snapshot resume brings back a stale clock, and every HTTPS stream then fails certificate validation ("validity interval is out-of-date").
 - **The GPU mode changes what you can measure.** `android emulator start` picks SwiftShader, a software renderer: frame timing is meaningless there (All Channels flings measured 88% janky frames on it, versus 2.4% on the real GPU). For any performance number, boot with `emulator -avd <avd> -gpu host`. SwiftShader is still useful: its decoder reproduced a real bug, the old channel's frame stuck around a lower-resolution new one, that `-gpu host` hides.
+- **The panel auto-hides after 7 s.** Separate `adb` commands usually land after it has closed, and the first key or tap then only reopens it. Run each test sequence in one command.
+- Typing with `adb shell input text` switches a phone to non-touch input mode (the edge tab hides until the next tap), and on the phone AVD it can bring up Gboard's stylus tutorial; `adb shell settings put secure stylus_handwriting_enabled 0` turns that off.
 - **`uiautomator dump` hangs while video plays**, because it waits for the UI to go idle. Find coordinates from screenshots instead (`adb exec-out screencap -p`).
 - `adb shell input text` with `(` or spaces: quote the whole shell command, e.g. `adb shell "input text 'RTV%s(720p)'"` (`%s` = space).
 - **A debug-signed install blocks the release APK** (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`), and vice versa. Uninstall first, which wipes favourites. Same on real devices: always hand out the signed release build.
@@ -56,6 +60,9 @@ Physical keyboard/mouse input to the emulator's own window does not work on this
 ## Git workflow
 
 - **No direct pushes to `main`.** Everything goes through a PR, even solo work.
+- **Commit messages are one line, no body.** The repo squash-merges with `COMMIT_MESSAGES` and `release.yml` publishes releases without notes, so GitHub shows the merge commit's message — every commit message in the PR, concatenated — on the release page.
+- Docs and PR descriptions are plain statements of what the app does: no selling tone, and no internal history such as fixed bugs or reviewer finding IDs.
+- A force-push while a Copilot review is running doesn't cancel it; the review lands on the old commits.
 - Version bumps (`versionName` + `versionCode` in `app/build.gradle.kts`) belong in the PR that should trigger a release.
 - The release workflow (`.github/workflows/release.yml`) has a `check-version` gate: it only builds+signs+publishes if `versionName` increased since the last published release. A merge that doesn't bump it is a no-op for releases (no rebuild, no republish) — this is intentional, not a bug.
 - `.github/workflows/ci.yml` builds the debug APK on every PR targeting `main` (check name: `build`) — **informational only**, not a hard merge gate. Classic branch protection *and* the newer Rulesets API both refused with "Upgrade to GitHub Pro or make this repository public" — a private repo on a free personal account can't enforce required status checks via GitHub's own merge-blocking. Don't re-attempt this without one of those two things changing; it's a real account-tier wall, not a config mistake.
@@ -64,7 +71,13 @@ Physical keyboard/mouse input to the emulator's own window does not work on this
 
 - No automated tests yet — the original template's tests were deleted because they referenced the placeholder code they replaced.
 - On TV, the player's CC and settings buttons can't be reached with the D-pad: the controller is kept out of the focus chain so that OK and Back behave (see `VideoPlayer.kt`). On a phone they're tappable.
+- Media3 places the settings/CC popup itself. `res/values/dimens.xml` overrides `exo_settings_offset` so it opens above the control row, but horizontally it stays at the right screen edge rather than over the settings button.
+- A channel is marked "not working" unless the device looks offline, and Android can take a while to notice that a Wi-Fi network lost its internet. Channels tried in that window get marked; each mark clears the next time the channel plays.
+- A category whose every channel was deleted stays in the menu until the next refresh (countries are filtered; the category check would be a LIKE scan over every channel on each launch).
+- A background check of every channel's streams (to find dead ones without playing them) was discussed and set aside: ~11k channels means a long, data-heavy run, and a playlist that loads can still fail to play.
 - A category filter inside Search was discussed and deferred by the user.
 - No manual Source-switcher UI in the player yet (the data model and automatic fallback-on-error both already support multiple sources per channel; just no on-screen "Source 2 of 3" control).
 - `androidx.tv` (tv-foundation/tv-material) is a dependency but the UI currently uses plain Compose Foundation/Material3 widgets with manual focus handling, not the TV-specific component set — a deliberate risk-aversion choice made under time pressure, not a final decision.
+- Channel lists sort with `COLLATE NOCASE`, which only folds ASCII case, so non-Latin names sort after Latin ones.
+- On Android 16, screens 600dp and wider (tablets, unfolded foldables) ignore the landscape lock.
 - Paging 3 is a dependency but not actually wired into any query yet — "All Channels" (~11k rows) still loads as a plain `Flow<List<ChannelEntity>>`, which is the one list where this will eventually matter for low-end-device memory.
