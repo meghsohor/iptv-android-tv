@@ -2,10 +2,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Only to tell "no internet" apart from "this one stream's server is down" in the playback error. -->
+    <!-- Tells "no internet" apart from a dead stream on the error screen. -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
-    <!-- Optional, since phones are a supported target too; declared so TV launchers/stores list it as a TV app. -->
+    <!-- Declared so TV stores list the app; not required, since it also runs on phones. -->
     <uses-feature
         android:name="android.software.leanback"
         android:required="false" />
@@ -31,7 +31,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- Makes the app show up on the Android TV home screen launcher. -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />

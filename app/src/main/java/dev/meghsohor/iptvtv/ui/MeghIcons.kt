@@ -2,27 +2,67 @@ package dev.meghsohor.iptvtv.ui
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.dp
 
-/** The handful of Material icons the app needs, inlined so we don't ship the whole icons library for a few paths. */
+// Paths after Lucide (lucide.dev, ISC licence), inlined instead of an icon library.
+// The solid ones are filled and stroked in one colour, which rounds their corners.
 object MeghIcons {
-  val ChevronLeft = icon("ChevronLeft", "M15.41,7.41L14,6l-6,6 6,6 1.41,-1.41L10.83,12z")
-  val ArrowBack = icon("ArrowBack", "M20,11H7.83l5.59,-5.59L12,4l-8,8 8,8 1.41,-1.41L7.83,13H20v-2z")
-  val VolumeUp =
-    icon(
-      "VolumeUp",
-      "M3,9v6h4l5,5V4L7,9H3zM16.5,12c0,-1.77 -1.02,-3.29 -2.5,-4.03v8.05c1.48,-0.73 2.5,-2.25 2.5,-4.02zM14,3.23v2.06c2.89,0.86 5,3.54 5,6.71s-2.11,5.85 -5,6.71v2.06c4.01,-0.91 7,-4.49 7,-8.77s-2.99,-7.86 -7,-8.77z",
+  val ChevronLeft = line("ChevronLeft", "M15,18l-6,-6 6,-6")
+  val ArrowBack = line("ArrowBack", "M12,19l-7,-7 7,-7", "M19,12H5")
+  val Refresh =
+    line(
+      "Refresh",
+      "M3,12a9,9 0,0 1,9,-9 9.75,9.75 0,0 1,6.74,2.74L21,8",
+      "M21,3v5h-5",
+      "M21,12a9,9 0,0 1,-9,9 9.75,9.75 0,0 1,-6.74,-2.74L3,16",
+      "M8,16H3v5",
     )
-  val VolumeOff =
-    icon(
-      "VolumeOff",
-      "M16.5,12c0,-1.77 -1.02,-3.29 -2.5,-4.03v2.21l2.45,2.45c0.03,-0.2 0.05,-0.41 0.05,-0.63zM19,12c0,0.94 -0.2,1.82 -0.54,2.64l1.51,1.51C20.63,14.91 21,13.5 21,12c0,-4.28 -2.99,-7.86 -7,-8.77v2.06c2.89,0.86 5,3.54 5,6.71zM4.27,3L3,4.27 7.73,9H3v6h4l5,5v-6.73l4.25,4.25c-0.67,0.52 -1.42,0.93 -2.25,1.18v2.06c1.38,-0.31 2.63,-0.95 3.69,-1.81L19.73,21 21,19.73l-9,-9L4.27,3zM12,4L9.91,6.09 12,8.18V4z",
+  val Search = line("Search", "M11,3a8,8 0,1 0,0,16a8,8 0,1 0,0,-16z", "M21,21l-4.3,-4.3")
+  val Grid = line("Grid", roundRect(3f, 3f), roundRect(14f, 3f), roundRect(14f, 14f), roundRect(3f, 14f))
+  val Star = line("Star", StarPath)
+  val StarFilled = solid("StarFilled", StarPath)
+  val Play = solid("Play", "M7,4.5l12,7.5 -12,7.5z")
+  val Pause = solid("Pause", roundRect(6f, 4f, 3f, 16f, 0.5f), roundRect(15f, 4f, 3f, 16f, 0.5f))
+  val VolumeUp = line("VolumeUp", SpeakerPath, "M16,9a5,5 0,0 1,0,6", "M19.364,18.364a9,9 0,0 0,0,-12.728")
+  val VolumeOff = line("VolumeOff", SpeakerPath, "M22,9l-6,6", "M16,9l6,6")
+  val Delete =
+    line(
+      "Delete",
+      "M3,6h18",
+      "M19,6v14c0,1 -1,2 -2,2H7c-1,0 -2,-1 -2,-2V6",
+      "M8,6V4c0,-1 1,-2 2,-2h4c1,0 2,1 2,2v2",
+      "M10,11v6",
+      "M14,11v6",
     )
 
-  private fun icon(name: String, pathData: String): ImageVector =
+  private const val StarPath = "M12,2l3.09,6.26L22,9.27l-5,4.87 1.18,6.88L12,17.77l-6.18,3.25L7,14.14 2,9.27l6.91,-1.01z"
+  private const val SpeakerPath =
+    "M11,4.702a0.705,0.705 0,0 0,-1.203,-0.498L6.413,7.587A1.4,1.4 0,0 1,5.416,8H3a1,1 0,0 0,-1,1v6a1,1 0,0 0,1,1h2.416a1.4,1.4 0,0 1,0.997,0.413l3.383,3.384A0.705,0.705 0,0 0,11,19.298z"
+
+  private fun roundRect(x: Float, y: Float, w: Float = 7f, h: Float = 7f, r: Float = 1f) =
+    "M${x + r},${y}h${w - 2 * r}a$r,$r 0,0 1,$r,${r}v${h - 2 * r}a$r,$r 0,0 1,-$r,${r}h-${w - 2 * r}a$r,$r 0,0 1,-$r,-${r}v-${h - 2 * r}a$r,$r 0,0 1,$r,-${r}z"
+
+  private fun line(name: String, vararg paths: String) = build(name, paths, filled = false)
+
+  private fun solid(name: String, vararg paths: String) = build(name, paths, filled = true)
+
+  private fun build(name: String, paths: Array<out String>, filled: Boolean): ImageVector =
     ImageVector.Builder(name = name, defaultWidth = 24.dp, defaultHeight = 24.dp, viewportWidth = 24f, viewportHeight = 24f)
-      .addPath(pathData = addPathNodes(pathData), fill = SolidColor(Color.White))
+      .apply {
+        for (path in paths) {
+          addPath(
+            pathData = addPathNodes(path),
+            fill = if (filled) SolidColor(Color.White) else null,
+            stroke = SolidColor(Color.White),
+            strokeLineWidth = 2f,
+            strokeLineCap = StrokeCap.Round,
+            strokeLineJoin = StrokeJoin.Round,
+          )
+        }
+      }
       .build()
 }

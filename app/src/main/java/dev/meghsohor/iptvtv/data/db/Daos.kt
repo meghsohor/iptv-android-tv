@@ -30,7 +30,11 @@ interface CategoryDao {
 
 @Dao
 interface CountryDao {
-  @Query("SELECT * FROM countries ORDER BY sortOrder") fun observeAll(): Flow<List<CountryEntity>>
+  // Leaves out a country whose channels were all deleted.
+  @Query(
+    "SELECT * FROM countries WHERE code IN (SELECT countryCode FROM channels WHERE id NOT IN (SELECT channelId FROM deleted_channels)) ORDER BY sortOrder"
+  )
+  fun observeAll(): Flow<List<CountryEntity>>
 
   @Query("DELETE FROM countries") suspend fun deleteAll()
 
@@ -47,25 +51,24 @@ interface CountryDao {
 
 data class ChannelSelection(val id: String, val selectedSourceUrl: String?)
 
-// Every list is alphabetical by name (source order only breaks ties): the source order is
-// playlist-by-playlist, which reads as random when scrolling a single country or category.
+// Lists sort by name (source order reads as random) and leave out deleted channels.
 @Dao
 interface ChannelDao {
-  @Query("SELECT * FROM channels ORDER BY displayName COLLATE NOCASE, sortOrder") fun observeAll(): Flow<List<ChannelEntity>>
+  @Query("SELECT * FROM channels WHERE id NOT IN (SELECT channelId FROM deleted_channels) ORDER BY displayName COLLATE NOCASE, sortOrder") fun observeAll(): Flow<List<ChannelEntity>>
 
   @Query(
-    "SELECT * FROM channels WHERE (';' || categoryIds || ';') LIKE ('%;' || :categoryId || ';%') ORDER BY displayName COLLATE NOCASE, sortOrder"
+    "SELECT * FROM channels WHERE (';' || categoryIds || ';') LIKE ('%;' || :categoryId || ';%') AND id NOT IN (SELECT channelId FROM deleted_channels) ORDER BY displayName COLLATE NOCASE, sortOrder"
   )
   fun observeByCategory(categoryId: String): Flow<List<ChannelEntity>>
 
-  @Query("SELECT * FROM channels WHERE countryCode = :countryCode ORDER BY displayName COLLATE NOCASE, sortOrder")
+  @Query("SELECT * FROM channels WHERE countryCode = :countryCode AND id NOT IN (SELECT channelId FROM deleted_channels) ORDER BY displayName COLLATE NOCASE, sortOrder")
   fun observeByCountry(countryCode: String): Flow<List<ChannelEntity>>
 
-  @Query("SELECT * FROM channels WHERE displayName LIKE '%' || :query || '%' ORDER BY displayName COLLATE NOCASE, sortOrder")
+  @Query("SELECT * FROM channels WHERE displayName LIKE '%' || :query || '%' AND id NOT IN (SELECT channelId FROM deleted_channels) ORDER BY displayName COLLATE NOCASE, sortOrder")
   fun observeSearch(query: String): Flow<List<ChannelEntity>>
 
   @Query(
-    "SELECT channels.* FROM channels INNER JOIN bookmarks ON channels.id = bookmarks.channelId ORDER BY channels.displayName COLLATE NOCASE, channels.sortOrder"
+    "SELECT channels.* FROM channels INNER JOIN bookmarks ON channels.id = bookmarks.channelId WHERE channels.id NOT IN (SELECT channelId FROM deleted_channels) ORDER BY channels.displayName COLLATE NOCASE, channels.sortOrder"
   )
   fun observeBookmarked(): Flow<List<ChannelEntity>>
 
@@ -77,12 +80,9 @@ interface ChannelDao {
 
   @Query("SELECT * FROM channels WHERE id = :id") fun observeById(id: String): Flow<ChannelEntity?>
 
-  /** id -> selectedSourceUrl for every channel, fetched in one query (no N+1) so a refresh over
-   * thousands of channels can preserve manual Source picks without a per-channel round trip. */
   @Query("SELECT id, selectedSourceUrl FROM channels") suspend fun allSelectedSources(): List<ChannelSelection>
 
-  // @Upsert, not @Insert(REPLACE): REPLACE is a SQLite DELETE-then-INSERT under the hood, which
-  // would fire bookmarks' ON DELETE CASCADE for every surviving channel on every single refresh.
+  // Not @Insert(REPLACE): that deletes and reinserts, and the delete cascades to bookmarks.
   @Upsert suspend fun upsertAll(channels: List<ChannelEntity>)
 
   @Query("DELETE FROM channels WHERE id IN (:ids)") suspend fun deleteByIds(ids: List<String>)
@@ -103,13 +103,7 @@ interface StreamUrlDao {
 
   @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(urls: List<StreamUrlEntity>)
 
-  /**
-   * Replaces the entire table in one go. A refresh rebuilds [urlsByChannel] for essentially the
-   * whole catalog already (every channel found in the freshly-fetched playlists), and channels
-   * that disappeared are cascade-deleted separately — so a per-channel `WHERE channelId IN (...)`
-   * delete isn't just redundant, it's unsafe: with ~11k channels it blows past SQLite's default
-   * 999-bind-variable limit and crashes every refresh.
-   */
+  // The whole table: a per-channel `IN (...)` delete over ~11k ids exceeds SQLite's bind-parameter limit.
   @Transaction
   suspend fun replaceAll(urlsByChannel: Map<String, List<StreamUrlEntity>>) {
     deleteAll()
@@ -127,4 +121,22 @@ interface BookmarkDao {
   @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun add(bookmark: BookmarkEntity)
 
   @Query("DELETE FROM bookmarks WHERE channelId = :channelId") suspend fun remove(channelId: String)
+}
+
+@Dao
+interface DeletedChannelDao {
+  @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun add(entry: DeletedChannelEntity)
+
+  @Query("DELETE FROM deleted_channels") suspend fun clear()
+}
+
+@Dao
+interface FailedChannelDao {
+  @Query("SELECT channelId FROM failed_channels") fun observeIds(): Flow<List<String>>
+
+  @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun add(entry: FailedChannelEntity)
+
+  @Query("DELETE FROM failed_channels WHERE channelId = :channelId") suspend fun remove(channelId: String)
+
+  @Query("DELETE FROM failed_channels WHERE channelId NOT IN (SELECT id FROM channels)") suspend fun deleteOrphans()
 }

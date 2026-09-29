@@ -12,6 +12,7 @@ An Android TV and phone app for watching the live TV channels listed by [iptv-or
 
 - Runs on Android TV (remote control) and Android phones (touch, landscape).
 - Channels browsed by category or country, with search and favourites stored on the device.
+- Channels that failed to play are marked. Any channel can be deleted; a refresh brings deleted channels back.
 - Plays HLS, DASH, SmoothStreaming and RTSP streams, and tries a channel's other stream URLs when one fails.
 - "Refresh Channels" updates the channel list from iptv-org.
 

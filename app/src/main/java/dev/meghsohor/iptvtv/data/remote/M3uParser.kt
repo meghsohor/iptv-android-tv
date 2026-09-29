@@ -1,14 +1,11 @@
 package dev.meghsohor.iptvtv.data.remote
 
-/** One `#EXTINF` + URL pair from an iptv-org playlist. [tvgId] is "channelId@feedId". */
+/** [tvgId] is "channelId@feedId". */
 internal data class M3uEntry(val tvgId: String, val title: String, val url: String)
 
 private val TVG_ID_REGEX = Regex("""tvg-id="([^"]*)"""")
 
-/**
- * Parses an iptv-org-style `.m3u` playlist. Entries with a blank/missing tvg-id are skipped —
- * there's no channel/feed key to map them to.
- */
+/** Skips entries without a tvg-id: there is no channel to map them to. */
 internal fun parseM3u(text: String): List<M3uEntry> {
   val entries = mutableListOf<M3uEntry>()
   var pendingTvgId: String? = null
@@ -30,7 +27,6 @@ internal fun parseM3u(text: String): List<M3uEntry> {
       pendingTvgId = null
       pendingTitle = null
     }
-    // other '#EXT*' directive lines are ignored
   }
   return entries
 }

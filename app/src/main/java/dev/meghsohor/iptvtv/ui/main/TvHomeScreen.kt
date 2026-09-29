@@ -6,7 +6,9 @@ import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -23,6 +25,7 @@ import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
@@ -43,7 +46,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -51,6 +53,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.withFrameNanos
@@ -58,17 +61,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.InputMode
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -81,6 +93,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -97,6 +110,8 @@ import dev.meghsohor.iptvtv.data.db.ChannelEntity
 import dev.meghsohor.iptvtv.data.db.CountryEntity
 import dev.meghsohor.iptvtv.theme.MeghBackground
 import dev.meghsohor.iptvtv.theme.MeghLive
+import dev.meghsohor.iptvtv.theme.MeghSurface
+import dev.meghsohor.iptvtv.theme.MeghSurfaceVariant
 import dev.meghsohor.iptvtv.ui.MeghIcons
 import dev.meghsohor.iptvtv.ui.player.PlayerCommand
 import dev.meghsohor.iptvtv.ui.player.VideoPlayer
@@ -105,13 +120,14 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
-private val PanelWidth = 340.dp
-private const val PanelAutoHideDelayMs = 5000L
+private val PanelWidth = 360.dp
+private val PanelHandleWidth = 44.dp
+private const val PanelAutoHideDelayMs = 7000L
 private const val SameBackPressWindowMs = 200L
 private val PanelNavigationKeys =
   setOf(Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight, Key.DirectionCenter, Key.Enter, Key.NumPadEnter)
 
-/** Below this, four stacked pinned rows would eat half the panel (a phone in landscape) — they collapse into one tab row. */
+/** Below this height the four pinned tabs share one row. */
 private val CompactPanelHeight = 480.dp
 
 @Composable
@@ -120,20 +136,24 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   val touchMode = LocalInputModeManager.current.inputMode == InputMode.Touch
 
-  // Panel auto-hide (TV only): any arrow key bumps activityTick (restarting the hide countdown) and
-  // reveals the panel; Channel Up/Down and volume deliberately don't touch either, per the spec. On
-  // touch the panel never times out — it opens from its edge handle and closes on a tap outside it.
+  // Auto-hide: arrow keys and touches inside the panel restart the count. Touches only stamp
+  // lastActivityAt, not state, so a drag doesn't recompose the screen on every move.
   var panelOpen by remember { mutableStateOf(true) }
   var activityTick by remember { mutableIntStateOf(0) }
+  val lastActivityAt = remember { longArrayOf(SystemClock.uptimeMillis()) }
+  var confirmRefresh by remember { mutableStateOf(false) }
+  var confirmExit by remember { mutableStateOf(false) }
   var searchFieldFocused by remember { mutableStateOf(false) }
+  var playbackActive by remember { mutableStateOf(false) }
+  var menuChannel by remember { mutableStateOf<IndexedValue<ChannelEntity>?>(null) }
+  var refocusAfterDelete by remember { mutableStateOf<IndexedValue<String>?>(null) }
   var playerControlsVisible by remember { mutableStateOf(false) }
   val rootFocusRequester = remember { FocusRequester() }
   val panelEntryFocusRequester = remember { FocusRequester() }
-  // One scroll position per panel view, hoisted above the panel itself: closing the panel (or
-  // stepping back from a country's channels) returns to exactly where the list was left.
+  // Hoisted per view, so a list is where it was left after the panel closes or a level goes back.
   val listStates = remember { mutableMapOf<PanelState, LazyListState>() }
   val listState = listStates.getOrPut(state.panel) { LazyListState() }
-  // Which row each menu was last left through, so D-pad focus can land back on it.
+  // The row each menu was left through, to put D-pad focus back on it.
   val openedFrom = remember { mutableMapOf<PanelState, Int>() }
   val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
   val playerCommands = remember { MutableSharedFlow<PlayerCommand>(extraBufferCapacity = 1) }
@@ -144,13 +164,12 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
 
   fun openPanel() {
     panelOpen = true
+    lastActivityAt[0] = SystemClock.uptimeMillis()
     activityTick++
   }
 
-  // Back peels off one layer at a time: player controls, then brings a hidden panel back, and only
-  // once the panel is visible does it walk up a level. On Android 13+ one press can land here twice
-  // (the key event forwarded below, then the platform's own back callback) — the echo is ignored,
-  // or a single press would both reveal the panel and navigate up.
+  // Back: the controls, then the panel, then the exit question. Android 13+ can deliver one press
+  // twice (the forwarded key, then the platform callback); the echo is ignored.
   val lastBackAt = remember { longArrayOf(0L) }
   BackHandler {
     val now = SystemClock.uptimeMillis()
@@ -158,42 +177,41 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
     lastBackAt[0] = now
     when {
       !panelOpen && playerControlsVisible -> playerCommands.tryEmit(PlayerCommand.HideControls)
-      !panelOpen -> openPanel()
-      state.panel != PanelState.CategoriesMenu -> {
-        viewModel.onBack()
-        openPanel()
-      }
-      // A real exit. Left to the system, Android 12+ only moves the task to the back, and reopening
-      // from the launcher would resume the last channel — the app would look like it autoplays.
-      else -> activity?.finish()
+      panelOpen -> panelOpen = false
+      // finish(): the system default only moves the task back, and reopening would resume the last channel.
+      else -> confirmExit = true
     }
   }
 
-  // The refresh dialog blocks interaction outright, so the panel has no business disappearing
-  // underneath it — stay visible for the whole refreshing -> result-shown lifecycle. Same while
-  // typing a search: a hide there would yank the keyboard out from under the user.
+  // Search freezes it for the whole Search view on touch, only while typing on TV: there nothing but the timer closes the panel.
   val refreshInProgress = state.refreshing || state.refreshMessage != null
-  val suppressAutoHide = touchMode || refreshInProgress || searchFieldFocused
+  val searching = if (touchMode) isSearch(state.panel) else searchFieldFocused
+  // Nothing to watch: on touch unless something plays; on TV only before the first pick, since there
+  // only the timer can move the panel off a paused picture or the error screen.
+  val nothingToWatch = if (touchMode) !(hasPlayer && playbackActive) else !hasPlayer
+  val suppressAutoHide = refreshInProgress || confirmRefresh || menuChannel != null || confirmExit || searching || nothingToWatch
   LaunchedEffect(refreshInProgress) { if (refreshInProgress) panelOpen = true }
 
-  LaunchedEffect(activityTick, suppressAutoHide) {
-    if (suppressAutoHide) return@LaunchedEffect
-    delay(PanelAutoHideDelayMs)
+  LaunchedEffect(activityTick, suppressAutoHide, panelOpen) {
+    if (suppressAutoHide || !panelOpen) return@LaunchedEffect
+    lastActivityAt[0] = SystemClock.uptimeMillis() // each relaunch restarts the count
+    while (true) {
+      val remaining = lastActivityAt[0] + PanelAutoHideDelayMs - SystemClock.uptimeMillis()
+      if (remaining <= 0) break
+      delay(remaining)
+    }
     panelOpen = false
   }
 
-  // Keyed on the flip itself (not activityTick) so it doesn't steal focus mid-browse. No entry
-  // focus on touch: it would only paint a D-pad highlight on a row nobody selected. At launch it
-  // waits for the opening view, or focus lands on Categories just before Favourites replaces it.
+  // Keyed on the flip, not activityTick, so it doesn't steal focus mid-browse. None on touch: it would
+  // only paint a highlight. At launch it waits for the opening view.
   LaunchedEffect(panelOpen, state.startupPanelChosen) {
     if (!panelOpen) rootFocusRequester.requestFocus()
     else if (!touchMode && state.startupPanelChosen) panelEntryFocusRequester.requestFocus()
   }
 
-  // Removing the focused element (Retry once a channel change clears the error, a row that was just
-  // opened or un-starred) drops focus for the whole screen — and with it every remote key, since keys
-  // only arrive here while something inside the root is focused. Take it back; the next arrow or OK
-  // then moves it on into the panel (below).
+  // Removing the focused element (Retry, an opened or un-starred row) drops focus, and with it every
+  // remote key. Take it back; the next key moves it into the panel.
   LaunchedEffect(rootHasFocus) {
     if (rootHasFocus) return@LaunchedEffect
     withFrameNanos {}
@@ -204,10 +222,7 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
   Box(
     modifier
       .fillMaxSize()
-      // No background of its own: the window's (same navy) is already there, and every extra
-      // full-screen fill is real cost on a low-end TV GPU.
-      // Keeps everything clear of the navigation bar and camera cutout; the video is letterboxed
-      // on a phone anyway, so this costs no picture.
+      // No background: the window's navy is already there. The insets keep clear of the navigation bar and cutout.
       .windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.displayCutout))
       .focusRequester(rootFocusRequester)
       .onFocusChanged {
@@ -216,23 +231,22 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
       }
       .focusable()
       .onPreviewKeyEvent { event ->
-        // Left alone, Compose turns Back into "move focus out of the focused row" and consumes it,
-        // so with a row focused the first press did nothing visible. Send it straight to the back
-        // dispatcher instead (on key-up, as the system does), which runs the BackHandler above.
+        // Compose would turn Back into a focus move and consume it: send it to the back dispatcher, on key-up.
         if (event.key == Key.Back && backDispatcher != null) {
           if (event.type == KeyEventType.KeyUp) backDispatcher.onBackPressed()
           return@onPreviewKeyEvent true
         }
         if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-        // A held key repeats KeyDown; toggles act on the first one only, repeats are swallowed.
+        // A held key repeats KeyDown; toggles act on the first only.
         val repeated = event.nativeKeyEvent.repeatCount > 0
-        // Focus parked on the root itself while the panel is up (see the focus-loss catch above):
-        // directional search never looks inside the focused node, so hand focus to the panel directly.
+        // Focus parked on the root with the panel up: directional search doesn't look inside it, so move it in directly.
         if (panelOpen && rootSelfFocused && !touchMode && event.key in PanelNavigationKeys) {
           openPanel()
           runCatching { panelEntryFocusRequester.requestFocus() }
           return@onPreviewKeyEvent true
         }
+        // Focus on the error screen's buttons: Left/Right move between them.
+        if (!panelOpen && !rootSelfFocused && (event.key == Key.DirectionLeft || event.key == Key.DirectionRight)) return@onPreviewKeyEvent false
         when (event.key) {
           Key.ChannelUp -> {
             viewModel.onChannelUp()
@@ -245,15 +259,14 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
           Key.MediaPlayPause -> repeated || playerCommands.tryEmit(PlayerCommand.TogglePlayPause)
           Key.MediaPlay -> playerCommands.tryEmit(PlayerCommand.Play)
           Key.MediaPause -> playerCommands.tryEmit(PlayerCommand.Pause)
-          // With the panel away, OK works like a tap on a phone: shows the controls, then plays/pauses
-          // — the only way to pause on remotes without media keys (e.g. Chromecast with Google TV).
+          // Panel closed: OK shows the controls, then plays/pauses, for remotes without media keys.
           Key.DirectionCenter, Key.Enter, Key.NumPadEnter ->
             when {
               panelOpen -> {
-                openPanel() // keeps the auto-hide timer alive; the focused row handles the click
+                openPanel() // keeps the timer alive; the row handles the click
                 false
               }
-              !rootSelfFocused -> false // something on the video has focus (Retry): let it act
+              !rootSelfFocused -> false // Retry or Delete has focus
               playerControlsVisible -> repeated || playerCommands.tryEmit(PlayerCommand.TogglePlayPause)
               hasPlayer -> repeated || playerCommands.tryEmit(PlayerCommand.ShowControls)
               else -> {
@@ -263,7 +276,7 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
             }
           Key.DirectionUp, Key.DirectionDown, Key.DirectionLeft, Key.DirectionRight -> {
             openPanel()
-            false // don't consume — let normal focus handling still run
+            false // normal focus handling still runs
           }
           else -> false
         }
@@ -285,7 +298,16 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
           }
         },
         onControlsVisibilityChange = { playerControlsVisible = it },
+        onPlaybackActiveChange = { playbackActive = it },
+        onAllSourcesFailed = { viewModel.onPlaybackFailed(currentChannel.id) },
+        onPlaying = { viewModel.onPlaybackWorked(currentChannel.id) },
+        onDeleteChannel = {
+          viewModel.onDeleteChannel(currentChannel.id)
+          openPanel()
+        },
         overlayEndPadding = if (panelOpen) PanelWidth else 0.dp,
+        // Clear of the edge tab, and the same on the left.
+        controlsEdgeInset = PanelHandleWidth + 8.dp,
         playerCommands = playerCommands,
         modifier = Modifier.fillMaxSize(),
       )
@@ -297,7 +319,7 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
         painter = painterResource(R.drawable.tv_banner),
         contentDescription = null,
         contentScale = ContentScale.Crop,
-        // Tappable only while there's a menu to close — otherwise a screen reader would announce a no-op action.
+        // Clickable only with a menu to close, or a screen reader announces a no-op.
         modifier =
           Modifier.fillMaxSize()
             .then(
@@ -317,13 +339,62 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
         viewModel = viewModel,
         touchMode = touchMode,
         entryFocusRequester = panelEntryFocusRequester,
+        onActivity = { lastActivityAt[0] = SystemClock.uptimeMillis() },
         onSearchFieldFocusChanged = { searchFieldFocused = it },
+        onRefresh = { confirmRefresh = true },
+        onChannelMenu = { index, channel -> menuChannel = IndexedValue(index, channel) },
+        refocusAfterDelete = refocusAfterDelete,
+        onRefocused = { refocusAfterDelete = null },
         listState = listState,
         openedFrom = openedFrom,
         modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(PanelWidth),
       )
     } else if (touchMode) {
       PanelHandle(onClick = ::openPanel, modifier = Modifier.align(Alignment.CenterEnd))
+    }
+
+    if (confirmRefresh) {
+      ConfirmDialog(
+        title = "Refresh channels?",
+        message = "This downloads the latest channel list from iptv-org. Any channels you deleted will come back.",
+        confirmLabel = "Refresh",
+        touchMode = touchMode,
+        onConfirm = {
+          confirmRefresh = false
+          viewModel.onRefresh()
+        },
+        onDismiss = { confirmRefresh = false },
+      )
+    }
+
+    if (confirmExit) {
+      ConfirmDialog(
+        title = "Exit MeghTV?",
+        message = null,
+        confirmLabel = "Exit",
+        touchMode = touchMode,
+        onConfirm = { activity?.finish() },
+        onDismiss = { confirmExit = false },
+      )
+    }
+
+    menuChannel?.let { (index, channel) ->
+      ChannelMenuDialog(
+        channel = channel,
+        bookmarked = channel.id in state.bookmarkedIds,
+        failed = channel.id in state.failedIds,
+        touchMode = touchMode,
+        onToggleBookmark = {
+          menuChannel = null
+          viewModel.onToggleBookmark(channel)
+        },
+        onDelete = {
+          menuChannel = null
+          if (!touchMode) refocusAfterDelete = IndexedValue(index, channel.id)
+          viewModel.onDeleteChannel(channel.id)
+        },
+        onDismiss = { menuChannel = null },
+      )
     }
 
     if (refreshInProgress) {
@@ -357,15 +428,14 @@ private fun NowPlayingBadge(channel: ChannelEntity, modifier: Modifier = Modifie
   }
 }
 
-/** Edge tab the panel slides out from — the touch way back in once it's closed. */
 @Composable
 private fun PanelHandle(onClick: () -> Unit, modifier: Modifier = Modifier) {
   val interaction = remember { MutableInteractionSource() }
   val pressed by interaction.collectIsPressedAsState()
   Box(
     modifier
-      .size(width = 44.dp, height = 96.dp)
-      // Translucent, but lighter than the navy letterbox bars it usually sits on — navy on navy vanishes.
+      .size(width = PanelHandleWidth, height = 96.dp)
+      // Lighter than the navy letterbox it sits on.
       .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
       .clickable(interactionSource = interaction, indication = null, onClick = onClick)
       .semantics { contentDescription = "Open menu" },
@@ -388,35 +458,51 @@ private fun SidePanel(
   entryFocusRequester: FocusRequester,
   listState: LazyListState,
   openedFrom: MutableMap<PanelState, Int>,
+  onActivity: () -> Unit,
   onSearchFieldFocusChanged: (Boolean) -> Unit,
+  onRefresh: () -> Unit,
+  onChannelMenu: (index: Int, ChannelEntity) -> Unit,
+  refocusAfterDelete: IndexedValue<String>?,
+  onRefocused: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  // D-pad: opening a list (or going back) removes the row that had focus, and the next key press
-  // would then restart at the top of the panel. Put focus on the row we came back through, or the
-  // first visible one, instead. Skipped when focus survived the switch (a pinned row was pressed).
+  val currentOnActivity by rememberUpdatedState(onActivity)
+  // A list change removes the focused row: focus the row it was opened from, or the first visible one.
   var panelHasFocus by remember { mutableStateOf(false) }
   val contentFocusRequester = remember { FocusRequester() }
-  val focusIndex = remember(state.panel) { openedFrom[state.panel] ?: listState.firstVisibleItemIndex }
-  // A channel list has no rows until its query returns (listChannels == null); waiting for that
-  // matters, since a revisited list's reused scroll state still describes the previous visit's rows.
-  val contentReady = state.panel !is PanelState.ChannelList || state.listChannels != null
-  // The panel it opened on is focused by the caller — skipped here until the panel first changes.
-  val openedOn = remember { arrayOf<PanelState?>(state.panel) }
-  LaunchedEffect(state.panel, contentReady) {
-    if (openedOn[0] != state.panel) openedOn[0] = null
-    if (touchMode || !contentReady || openedOn[0] != null) return@LaunchedEffect
+  var focusIndex by remember(state.panel) { mutableIntStateOf(openedFrom[state.panel] ?: listState.firstVisibleItemIndex) }
+  suspend fun focusRow(index: Int) {
     withFrameNanos {} // compose the list...
     withFrameNanos {} // ...and lay it out
-    if (panelHasFocus) return@LaunchedEffect
-    if (listState.layoutInfo.visibleItemsInfo.none { it.index == focusIndex }) listState.scrollToItem(focusIndex)
-    val shown = withTimeoutOrNull(2_000) { snapshotFlow { listState.layoutInfo.visibleItemsInfo.any { it.index == focusIndex } }.first { it } }
+    if (panelHasFocus) return
+    if (listState.layoutInfo.visibleItemsInfo.none { it.index == index }) listState.scrollToItem(index)
+    val shown = withTimeoutOrNull(2_000) { snapshotFlow { listState.layoutInfo.visibleItemsInfo.any { it.index == index } }.first { it } }
     if (shown != null) {
       withFrameNanos {}
       runCatching { contentFocusRequester.requestFocus() } // the row may have scrolled away meanwhile
     }
   }
-  // The panel opens with focus on the highlighted tab, not on Refresh: OK pressed twice to "wake"
-  // the panel would otherwise start a full network refresh.
+  // Wait for the query: a revisited list's scroll state still describes the previous visit.
+  val contentReady = state.panel !is PanelState.ChannelList || state.listChannels != null
+  // The caller focuses the view it opened on.
+  val openedOn = remember { arrayOf<PanelState?>(state.panel) }
+  LaunchedEffect(state.panel, contentReady) {
+    if (openedOn[0] != state.panel) openedOn[0] = null
+    if (touchMode || !contentReady || openedOn[0] != null) return@LaunchedEffect
+    focusRow(focusIndex)
+  }
+  // Once a deleted row leaves the list, focus the row that took its place.
+  LaunchedEffect(refocusAfterDelete, state.listChannels) {
+    val (index, deletedId) = refocusAfterDelete ?: return@LaunchedEffect
+    val rows = state.listChannels ?: return@LaunchedEffect
+    if (rows.any { it.id == deletedId }) return@LaunchedEffect
+    if (rows.isNotEmpty()) {
+      focusIndex = index.coerceAtMost(rows.lastIndex)
+      focusRow(focusIndex)
+    }
+    onRefocused()
+  }
+  // Entry focus is the selected tab, not Refresh: a double OK to wake the panel would start a refresh.
   fun entry(selected: Boolean) = if (selected) Modifier.focusRequester(entryFocusRequester) else Modifier
   fun open(index: Int, navigate: () -> Unit) {
     openedFrom[state.panel] = index
@@ -425,31 +511,51 @@ private fun SidePanel(
 
   BoxWithConstraints(
     modifier
-      .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
+      .drawBehind {
+        drawRect(PanelBackground)
+        drawRect(LineColor, size = size.copy(width = 1.dp.toPx()))
+      }
       .onFocusChanged { panelHasFocus = it.hasFocus }
-      // Registers as a touch target (observing, never consuming) so a tap on empty panel space
-      // doesn't fall through to the video behind — which would close the panel.
-      .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent(PointerEventPass.Initial) } }
+      // Observes every touch: restarts the countdown, and stops a tap on empty space reaching the video.
+      .pointerInput(Unit) {
+        awaitPointerEventScope {
+          while (true) {
+            awaitPointerEvent(PointerEventPass.Initial)
+            currentOnActivity()
+          }
+        }
+      }
       .imePadding()
   ) {
     val compact = maxHeight < CompactPanelHeight
     Column(Modifier.fillMaxSize()) {
+      val band = Modifier.fillMaxWidth().background(PinnedBand).drawBehind {
+        drawRect(LineColor, topLeft = Offset(0f, size.height - 1.dp.toPx()), size = size.copy(height = 1.dp.toPx()))
+      }
       if (compact) {
-        Row(Modifier.fillMaxWidth()) {
-          PinnedRow("Refresh", viewModel::onRefresh, compact = true, modifier = Modifier.weight(1f))
-          PinnedRow("Search", viewModel::onPinnedSearch, selected = isSearch(state.panel), compact = true, modifier = Modifier.weight(1f).then(entry(isSearch(state.panel))))
-          PinnedRow("Favourites", viewModel::onPinnedFavourites, selected = isFavourites(state.panel), compact = true, modifier = Modifier.weight(1f).then(entry(isFavourites(state.panel))))
-          PinnedRow("Categories", viewModel::onPinnedCategories, selected = isCategories(state.panel), compact = true, modifier = Modifier.weight(1f).then(entry(isCategories(state.panel))))
+        Row(band.height(52.dp).padding(bottom = 1.dp), verticalAlignment = Alignment.CenterVertically) {
+          PinnedRow("Refresh", MeghIcons.Refresh, onRefresh, compact = true, modifier = Modifier.weight(1f))
+          PinnedDivider(vertical = true)
+          PinnedRow("Search", MeghIcons.Search, viewModel::onPinnedSearch, selected = isSearch(state.panel), compact = true, modifier = Modifier.weight(1f).then(entry(isSearch(state.panel))))
+          PinnedDivider(vertical = true)
+          PinnedRow("Favourites", MeghIcons.Star, viewModel::onPinnedFavourites, selected = isFavourites(state.panel), compact = true, modifier = Modifier.weight(1f).then(entry(isFavourites(state.panel))))
+          PinnedDivider(vertical = true)
+          PinnedRow("Categories", MeghIcons.Grid, viewModel::onPinnedCategories, selected = isCategories(state.panel), compact = true, modifier = Modifier.weight(1f).then(entry(isCategories(state.panel))))
         }
       } else {
-        PinnedRow("Refresh Channels", viewModel::onRefresh, modifier = Modifier.fillMaxWidth())
-        PinnedRow("Search", viewModel::onPinnedSearch, selected = isSearch(state.panel), modifier = Modifier.fillMaxWidth().then(entry(isSearch(state.panel))))
-        PinnedRow("Favourites", viewModel::onPinnedFavourites, selected = isFavourites(state.panel), modifier = Modifier.fillMaxWidth().then(entry(isFavourites(state.panel))))
-        PinnedRow("Categories", viewModel::onPinnedCategories, selected = isCategories(state.panel), modifier = Modifier.fillMaxWidth().then(entry(isCategories(state.panel))))
+        Column(band) {
+          PinnedRow("Refresh Channels", MeghIcons.Refresh, onRefresh, modifier = Modifier.fillMaxWidth())
+          PinnedDivider(vertical = false)
+          PinnedRow("Search", MeghIcons.Search, viewModel::onPinnedSearch, selected = isSearch(state.panel), modifier = Modifier.fillMaxWidth().then(entry(isSearch(state.panel))))
+          PinnedDivider(vertical = false)
+          PinnedRow("Favourites", MeghIcons.Star, viewModel::onPinnedFavourites, selected = isFavourites(state.panel), modifier = Modifier.fillMaxWidth().then(entry(isFavourites(state.panel))))
+          PinnedDivider(vertical = false)
+          PinnedRow("Categories", MeghIcons.Grid, viewModel::onPinnedCategories, selected = isCategories(state.panel), modifier = Modifier.fillMaxWidth().then(entry(isCategories(state.panel))))
+        }
       }
 
-      // Nothing until launch has picked the opening view, or Categories flashes up before Favourites.
-      Box(Modifier.weight(1f)) {
+      // Empty until launch picks the opening view, or Categories flashes up first.
+      Box(Modifier.weight(1f).padding(start = RowGutter, end = RowGutter, top = 10.dp)) {
         if (state.startupPanelChosen) when (val panel = state.panel) {
           PanelState.CategoriesMenu ->
             CategoriesMenuContent(
@@ -481,12 +587,14 @@ private fun SidePanel(
               channels = state.listChannels,
               countries = state.countries,
               bookmarkedIds = state.bookmarkedIds,
+              failedIds = state.failedIds,
               currentChannelId = state.currentChannel?.id,
               onBack = { viewModel.onBack() },
               onSearchQueryChange = viewModel::onSearchQueryChange,
-              onSearchFieldFocusChanged = onSearchFieldFocusChanged,
               onSelectChannel = viewModel::onSelectChannel,
               onToggleBookmark = viewModel::onToggleBookmark,
+              onChannelMenu = onChannelMenu,
+              onSearchFieldFocusChanged = onSearchFieldFocusChanged,
             )
         }
       }
@@ -498,50 +606,138 @@ private fun isSearch(panel: PanelState) = panel is PanelState.ChannelList && pan
 
 private fun isFavourites(panel: PanelState) = panel is PanelState.ChannelList && panel.source == ChannelListSource.Favourites
 
-/** Everything reached by drilling down from the Categories row, so that row stays highlighted there too. */
+/** Drill-downs from Categories keep that tab highlighted. */
 private fun isCategories(panel: PanelState) = !isSearch(panel) && !isFavourites(panel)
 
+private val RowGutter = 10.dp
+private val RowGap = 6.dp
+private val RowRadius = 12.dp
+private val PanelBackground = MeghSurface.copy(alpha = 0.97f)
+private val PinnedBand = lerp(MeghSurface, MeghBackground, 0.4f)
+private val RowFill = MeghSurfaceVariant.copy(alpha = 0.55f)
+private val LineColor = Color.White.copy(alpha = 0.09f)
+
+private val DimmedRowFill = MeghSurfaceVariant.copy(alpha = 0.2f)
+private val DimmedLineColor = Color.White.copy(alpha = 0.04f)
+private const val DimmedTextAlpha = 0.5f
+
 /**
- * Shared row treatment: the active row (selected tab, playing channel) is solid brand cyan — pair
- * it with [rowContentColor] — and a focused or pressed row gets a tint, plus a 4dp accent bar when
- * D-pad focused (white on the cyan row, where a cyan bar would vanish). No colour animation: that's
- * one more running animation per visible row, for nothing, on a low-end TV.
+ * A [block] (list row) is a rounded block with a hairline border, fainter when [dimmed]; a pinned tab
+ * only fills when selected, pressed or focused. Selected is brand cyan (pair with [rowContentColor]),
+ * and D-pad focus draws a 2dp ring. One drawBehind, no clip or animation: those cost per row on a low-end TV.
  */
 @Composable
-private fun Modifier.panelRow(interaction: MutableInteractionSource, selected: Boolean = false, onClick: () -> Unit): Modifier {
+private fun Modifier.panelRow(
+  interaction: MutableInteractionSource,
+  selected: Boolean = false,
+  block: Boolean = true,
+  dimmed: Boolean = false,
+  onLongClick: (() -> Unit)? = null,
+  onClick: () -> Unit,
+): Modifier {
   val focused by interaction.collectIsFocusedAsState()
   val pressed by interaction.collectIsPressedAsState()
   val colors = MaterialTheme.colorScheme
-  val background =
+  val fill =
     when {
       selected -> colors.primary
       focused || pressed -> colors.surfaceVariant
+      dimmed -> DimmedRowFill
+      block -> RowFill
       else -> Color.Transparent
     }
-  val accent = if (selected) Color.White else colors.primary
-  return this.background(background)
-    .drawBehind { if (focused) drawRect(color = accent, size = size.copy(width = 4.dp.toPx())) }
-    .clickable(interactionSource = interaction, indication = null, onClick = onClick)
+  val ring = if (selected) colors.onPrimary else colors.primary
+  return this.drawBehind {
+      val radius = if (block) RowRadius.toPx() else 0f
+      drawRoundRect(fill, cornerRadius = CornerRadius(radius))
+      val width = (if (focused) 2.dp else 1.dp).toPx()
+      val inset = Offset(width / 2, width / 2)
+      val ringSize = Size(size.width - width, size.height - width)
+      val corner = CornerRadius(radius - width / 2)
+      when {
+        focused -> drawRoundRect(ring, topLeft = inset, size = ringSize, cornerRadius = corner, style = Stroke(width))
+        block && !selected -> drawRoundRect(if (dimmed) DimmedLineColor else LineColor, topLeft = inset, size = ringSize, cornerRadius = corner, style = Stroke(width))
+      }
+    }
+    .combinedClickable(interactionSource = interaction, indication = null, onLongClick = onLongClick, onClick = onClick)
     .focusable(interactionSource = interaction)
+}
+
+private val ThumbIdle = Color(0xFF2C3860)
+private val ThumbActive = Color(0xFF4A5A8C)
+
+/** Rows are near-equal height, so their average stands in for real offsets. Draw phase only: scrolling never recomposes. */
+private fun Modifier.scrollIndicator(state: LazyListState): Modifier = drawWithContent {
+  drawContent()
+  val info = state.layoutInfo
+  val visible = info.visibleItemsInfo
+  if (visible.isEmpty() || !(state.canScrollForward || state.canScrollBackward)) return@drawWithContent
+  val itemSize = visible.sumOf { it.size }.toFloat() / visible.size + info.mainAxisItemSpacing
+  val viewport = (info.viewportEndOffset - info.viewportStartOffset).toFloat()
+  val content = itemSize * info.totalItemsCount
+  val scrolled = visible.first().index * itemSize - visible.first().offset
+  val thumb = (viewport * viewport / content).coerceIn(28.dp.toPx(), viewport)
+  val top = (scrolled / (content - viewport)).coerceIn(0f, 1f) * (viewport - thumb)
+  val width = 3.dp.toPx()
+  drawRoundRect(
+    if (state.isScrollInProgress) ThumbActive else ThumbIdle,
+    topLeft = Offset(size.width + (RowGutter.toPx() - width) / 2, top),
+    size = Size(width, thumb),
+    cornerRadius = CornerRadius(width / 2),
+  )
+}
+
+/** Left on the row itself goes up a level. Not from the star: its Left bubbles up here and must move focus to the row. */
+@Composable
+private fun Modifier.leftGoesUp(interaction: MutableInteractionSource, onNavigateUp: (() -> Unit)?): Modifier {
+  if (onNavigateUp == null) return this
+  val focused by interaction.collectIsFocusedAsState()
+  return onKeyEvent { event ->
+    if (focused && event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+      onNavigateUp()
+      true
+    } else {
+      false
+    }
+  }
+}
+
+@Composable
+private fun PinnedDivider(vertical: Boolean) {
+  Box(if (vertical) Modifier.width(1.dp).height(24.dp).background(LineColor) else Modifier.fillMaxWidth().padding(horizontal = 16.dp).height(1.dp).background(LineColor))
 }
 
 @Composable
 private fun rowContentColor(selected: Boolean): Color = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
 
 @Composable
-private fun PinnedRow(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, selected: Boolean = false, compact: Boolean = false) {
+private fun PinnedRow(
+  label: String,
+  icon: ImageVector,
+  onClick: () -> Unit,
+  modifier: Modifier = Modifier,
+  selected: Boolean = false,
+  compact: Boolean = false,
+) {
   val interaction = remember { MutableInteractionSource() }
-  Box(
+  Row(
     modifier
-      .panelRow(interaction, selected, onClick)
-      .heightIn(min = if (compact) 48.dp else 52.dp)
-      .padding(horizontal = if (compact) 4.dp else 20.dp),
-    contentAlignment = if (compact) Alignment.Center else Alignment.CenterStart,
+      .panelRow(interaction, selected, block = false, onClick = onClick)
+      .then(if (compact) Modifier.fillMaxHeight() else Modifier.heightIn(min = 48.dp))
+      .padding(horizontal = if (compact) 2.dp else 16.dp),
+    horizontalArrangement = if (compact) Arrangement.Center else Arrangement.Start,
+    verticalAlignment = Alignment.CenterVertically,
   ) {
+    // Too narrow for an icon and "Favourites".
+    if (!compact) {
+      Icon(icon, contentDescription = null, tint = if (selected) rowContentColor(true) else MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
+      Spacer(Modifier.width(14.dp))
+    }
     Text(
       label,
       color = rowContentColor(selected),
       style = if (compact) MaterialTheme.typography.labelLarge else MaterialTheme.typography.titleSmall,
+      fontWeight = FontWeight.Normal,
       maxLines = 1,
       overflow = TextOverflow.Ellipsis,
     )
@@ -559,7 +755,7 @@ private fun CategoriesMenuContent(
   onCategory: (index: Int, CategoryEntity) -> Unit,
 ) {
   fun rowModifier(index: Int) = if (index == focusIndex) Modifier.focusRequester(focusRequester) else Modifier
-  LazyColumn(state = listState, contentPadding = PaddingValues(vertical = 4.dp)) {
+  LazyColumn(Modifier.scrollIndicator(listState), state = listState, contentPadding = ListPadding, verticalArrangement = Arrangement.spacedBy(RowGap)) {
     item { PlainRow("All Channels", onClick = onAllChannels, modifier = rowModifier(0)) }
     item { PlainRow("Countries", onClick = onCountries, modifier = rowModifier(1)) }
     itemsIndexed(categories, key = { _, it -> it.id }) { i, category ->
@@ -579,11 +775,12 @@ private fun CountriesMenuContent(
 ) {
   Column {
     BackHeader("Countries", onBack = onBack)
-    LazyColumn(state = listState) {
+    LazyColumn(Modifier.scrollIndicator(listState), state = listState, contentPadding = ListPadding, verticalArrangement = Arrangement.spacedBy(RowGap)) {
       itemsIndexed(countries, key = { _, it -> it.code }) { i, country ->
         PlainRow(
           "${country.flag}  ${country.name}",
           onClick = { onCountry(i, country) },
+          onNavigateUp = onBack,
           modifier = if (i == focusIndex) Modifier.focusRequester(focusRequester) else Modifier,
         )
       }
@@ -602,23 +799,22 @@ private fun ChannelListContent(
   channels: List<ChannelEntity>?,
   countries: List<CountryEntity>,
   bookmarkedIds: Set<String>,
+  failedIds: Set<String>,
   currentChannelId: String?,
   onBack: () -> Unit,
   onSearchQueryChange: (String) -> Unit,
-  onSearchFieldFocusChanged: (Boolean) -> Unit,
   onSelectChannel: (String) -> Unit,
   onToggleBookmark: (ChannelEntity) -> Unit,
+  onChannelMenu: (index: Int, ChannelEntity) -> Unit,
+  onSearchFieldFocusChanged: (Boolean) -> Unit,
 ) {
   val flagByCountry = remember(countries) { countries.associate { it.code to it.flag } }
   val isSearch = source == ChannelListSource.Search
   val keyboard = LocalSoftwareKeyboardController.current
 
   Column {
-    // Search and Favourites are opened from their own pinned row, which already stays highlighted
-    // as the title — a heading repeating it just read as a duplicate entry, so they get a bare count.
+    // Favourites and Search are named by their highlighted tab; a heading would repeat it.
     if (!isSearch && source != ChannelListSource.Favourites) BackHeader(source.headerName, count = channels?.size, onBack = onBack)
-    // Only Search gets a text field — everywhere else, Search itself is the one place to filter by
-    // name, so a second per-list filter box was redundant.
     if (isSearch) {
       SearchField(
         value = searchQuery,
@@ -627,19 +823,24 @@ private fun ChannelListContent(
         onFocusChanged = onSearchFieldFocusChanged,
       )
     }
-    if (channels == null) return@Column // still loading — no count or "nothing here" to show yet
+    if (channels == null) return@Column // still loading
     if ((isSearch || source == ChannelListSource.Favourites) && channels.isNotEmpty()) ChannelCount(channels.size)
     if (channels.isEmpty()) {
       EmptyListMessage(
         when {
-          source == ChannelListSource.Favourites -> "No favourites yet.\nUse the ☆ next to any channel to add it here."
+          source == ChannelListSource.Favourites -> "No favourites yet.\nUse the star next to any channel to add it here."
           isSearch && searchQuery.isBlank() -> "Type a channel name to search."
           isSearch -> "No channels match \"$searchQuery\"."
           else -> "No channels here."
         }
       )
     }
-    LazyColumn(state = listState) {
+    LazyColumn(
+      Modifier.scrollIndicator(listState),
+      state = listState,
+      contentPadding = ListPadding,
+      verticalArrangement = Arrangement.spacedBy(RowGap),
+    ) {
       itemsIndexed(channels, key = { _, it -> it.id }) { i, channel ->
         ChannelRow(
           modifier = if (i == focusIndex) Modifier.focusRequester(focusRequester) else Modifier,
@@ -647,11 +848,18 @@ private fun ChannelListContent(
           flag = flagByCountry[channel.countryCode].orEmpty(),
           bookmarked = channel.id in bookmarkedIds,
           playing = channel.id == currentChannelId,
+          failed = channel.id in failedIds,
+          onLongClick = {
+            if (isSearch) keyboard?.hide()
+            onChannelMenu(i, channel)
+          },
           onClick = {
-            if (isSearch) keyboard?.hide() // a tap on a row doesn't take focus from the field, so the keyboard would stay up over the video
+            if (isSearch) keyboard?.hide() // tapping a row leaves the keyboard up
             onSelectChannel(channel.id)
           },
           onToggleBookmark = { onToggleBookmark(channel) },
+          // Top-level tabs: nothing above them.
+          onNavigateUp = if (isSearch || source == ChannelListSource.Favourites) null else onBack,
         )
       }
     }
@@ -662,10 +870,11 @@ private fun ChannelListContent(
 private fun BackHeader(title: String, onBack: () -> Unit, count: Int? = null) {
   val interaction = remember { MutableInteractionSource() }
   Row(
-    Modifier.fillMaxWidth()
+    Modifier.padding(bottom = RowGap)
+      .fillMaxWidth()
       .panelRow(interaction, onClick = onBack)
-      .heightIn(min = 52.dp)
-      .padding(horizontal = 16.dp),
+      .heightIn(min = 48.dp)
+      .padding(horizontal = 14.dp),
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Icon(MeghIcons.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
@@ -678,7 +887,7 @@ private fun BackHeader(title: String, onBack: () -> Unit, count: Int? = null) {
       overflow = TextOverflow.Ellipsis,
       modifier = Modifier.weight(1f, fill = false),
     )
-    // Outside the title's Text so a long name ellipsizes without ever cutting the count off.
+    // Separate Text, so a long name ellipsizes without cutting off the count.
     if (count != null) {
       Text("  ($count)", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium, maxLines = 1)
     }
@@ -691,7 +900,7 @@ private fun ChannelCount(count: Int) {
     if (count == 1) "1 channel" else "$count channels",
     color = MaterialTheme.colorScheme.onSurfaceVariant,
     style = MaterialTheme.typography.labelMedium,
-    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+    modifier = Modifier.padding(start = 6.dp, bottom = RowGap),
   )
 }
 
@@ -707,24 +916,26 @@ private fun EmptyListMessage(text: String) {
 }
 
 @Composable
-private fun SearchField(value: String, onValueChange: (String) -> Unit, autoFocus: Boolean, onFocusChanged: (Boolean) -> Unit = {}) {
-  // A text field otherwise swallows DPAD_DOWN as a (no-op) cursor-move key instead of letting
-  // focus continue into the list below — intercept it here, before the field sees it, and hand
-  // it to normal focus traversal instead. Standard gotcha wiring a plain text field into a D-pad UI.
+private fun SearchField(value: String, onValueChange: (String) -> Unit, autoFocus: Boolean, onFocusChanged: (Boolean) -> Unit) {
+  // The field would swallow DPAD_DOWN as a cursor move: hand it to focus traversal.
   val focusManager = LocalFocusManager.current
   val keyboard = LocalSoftwareKeyboardController.current
   val fieldFocusRequester = remember { FocusRequester() }
-  // On touch, opening Search means typing — go straight to the keyboard rather than making the user
-  // tap the box too. Not when coming back to earlier results, though: the keyboard would cover them.
+  // Touch: straight to the keyboard, unless there are earlier results it would cover.
   LaunchedEffect(Unit) { if (autoFocus && value.isBlank()) fieldFocusRequester.requestFocus() }
 
+  var focused by remember { mutableStateOf(false) }
+  val shape = RoundedCornerShape(RowRadius)
   Box(
     Modifier.fillMaxWidth()
-      .padding(horizontal = 20.dp, vertical = 8.dp)
-      .clip(RoundedCornerShape(8.dp))
-      .background(MaterialTheme.colorScheme.surfaceVariant)
-      .padding(12.dp, 10.dp)
-      .onFocusChanged { onFocusChanged(it.hasFocus) } // Box itself isn't focusable — BasicTextField below is
+      .padding(bottom = RowGap)
+      .background(MaterialTheme.colorScheme.surfaceVariant, shape)
+      .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else LineColor, shape)
+      .padding(14.dp, 12.dp)
+      .onFocusChanged { // the field inside is the focusable one
+        focused = it.hasFocus
+        onFocusChanged(it.hasFocus)
+      }
       .onPreviewKeyEvent { event ->
         if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
           focusManager.moveFocus(FocusDirection.Down)
@@ -743,20 +954,23 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, autoFocu
       cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
       keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
       keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
-      // Full width so a tap anywhere in the box (including on the placeholder) lands on the field.
+      // Full width, so a tap anywhere in the box lands on the field.
       modifier = Modifier.fillMaxWidth().focusRequester(fieldFocusRequester),
     )
   }
 }
 
 @Composable
-private fun PlainRow(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun PlainRow(label: String, onClick: () -> Unit, modifier: Modifier = Modifier, onNavigateUp: (() -> Unit)? = null) {
   val interaction = remember { MutableInteractionSource() }
   Row(
     modifier
       .fillMaxWidth()
+      .leftGoesUp(interaction, onNavigateUp)
       .panelRow(interaction, onClick = onClick)
-      .padding(20.dp, 14.dp),
+      .heightIn(min = 48.dp)
+      .padding(horizontal = 16.dp),
+    verticalAlignment = Alignment.CenterVertically,
   ) {
     Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
   }
@@ -768,8 +982,11 @@ private fun ChannelRow(
   flag: String,
   bookmarked: Boolean,
   playing: Boolean,
+  failed: Boolean,
   onClick: () -> Unit,
+  onLongClick: () -> Unit,
   onToggleBookmark: () -> Unit,
+  onNavigateUp: (() -> Unit)?,
   modifier: Modifier = Modifier,
 ) {
   val interaction = remember { MutableInteractionSource() }
@@ -778,18 +995,19 @@ private fun ChannelRow(
   Row(
     modifier
       .fillMaxWidth()
-      // D-pad: the star sits inside the row's own bounds, which directional search never looks
-      // into — without an explicit link, Right from the row went nowhere and the star was touch-only.
+      // The star is inside the row's bounds, which directional search skips: link it explicitly.
       .focusRequester(rowFocus)
       .focusProperties { right = starFocus }
-      .panelRow(interaction, selected = playing, onClick = onClick)
-      .heightIn(min = 52.dp)
-      .padding(start = 20.dp, end = 4.dp),
+      .leftGoesUp(interaction, onNavigateUp)
+      .panelRow(interaction, selected = playing, dimmed = failed, onLongClick = onLongClick, onClick = onClick)
+      .semantics { if (failed) stateDescription = "Not working" }
+      .heightIn(min = 48.dp)
+      .padding(start = 14.dp, end = 2.dp),
     horizontalArrangement = Arrangement.SpaceBetween,
     verticalAlignment = Alignment.CenterVertically,
   ) {
     Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-      if (playing) Text("▶  ", color = rowContentColor(selected = true), style = MaterialTheme.typography.bodyMedium)
+      if (playing) Icon(MeghIcons.Play, contentDescription = null, tint = rowContentColor(selected = true), modifier = Modifier.padding(end = 8.dp).size(12.dp))
       Text(
         "$flag  ${channel.displayName}",
         color = rowContentColor(playing),
@@ -797,15 +1015,15 @@ private fun ChannelRow(
         fontWeight = if (playing) FontWeight.Bold else null,
         overflow = TextOverflow.Ellipsis,
         maxLines = 1,
-        modifier = Modifier.weight(1f, fill = false),
+        // alpha(), not a text colour: colour alpha doesn't reach the flag emoji.
+        modifier = Modifier.weight(1f, fill = false).then(if (failed && !playing) Modifier.alpha(DimmedTextAlpha) else Modifier),
       )
     }
     val starInteraction = remember { MutableInteractionSource() }
     val starFocused by starInteraction.collectIsFocusedAsState()
     val starPressed by starInteraction.collectIsPressedAsState()
     val starHighlight = if (playing) Color.White.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant
-    // 48dp: a comfortable finger target, not just a D-pad stop. A shaped background rather than
-    // clip(): a clip would give every row its own render layer.
+    // 48dp touch target. A shaped background, not clip(): a clip gives every row a render layer.
     Box(
       Modifier.size(48.dp)
         .background(if (starFocused || starPressed) starHighlight else Color.Transparent, RoundedCornerShape(8.dp))
@@ -821,22 +1039,119 @@ private fun ChannelRow(
         .semantics { contentDescription = "${channel.displayName} favourite" },
       contentAlignment = Alignment.Center,
     ) {
-      Text(
-        if (bookmarked) "★" else "☆",
-        // On the cyan playing row both states go dark; the filled vs outlined shape carries it there.
-        color =
+      Icon(
+        if (bookmarked) MeghIcons.StarFilled else MeghIcons.Star,
+        contentDescription = null,
+        // On the cyan row both states are dark; the shape tells them apart.
+        tint =
           when {
             playing -> rowContentColor(selected = true)
             bookmarked -> Color.White
             else -> MaterialTheme.colorScheme.onSurfaceVariant
           },
-        style = MaterialTheme.typography.titleLarge,
+        modifier = Modifier.size(20.dp),
       )
     }
   }
 }
 
+private val ListPadding = PaddingValues(bottom = 12.dp)
+
 private const val RefreshResultAutoCloseMs = 4000L
+
+@Composable
+private fun DialogCard(content: @Composable () -> Unit) {
+  val shape = RoundedCornerShape(16.dp)
+  Box(Modifier.widthIn(min = 300.dp, max = 420.dp).background(MaterialTheme.colorScheme.surface, shape).border(1.dp, LineColor, shape)) { content() }
+}
+
+@Composable
+private fun ConfirmDialog(
+  title: String,
+  message: String?,
+  confirmLabel: String,
+  touchMode: Boolean,
+  onConfirm: () -> Unit,
+  onDismiss: () -> Unit,
+) {
+  // Cancel first, so OK pressed twice can't confirm.
+  val cancelFocus = remember { FocusRequester() }
+  Dialog(onDismissRequest = onDismiss) {
+    // Inside the dialog, whose content is composed in its own window.
+    LaunchedEffect(Unit) { if (!touchMode) cancelFocus.requestFocus() }
+    DialogCard {
+      Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(title, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleMedium)
+        if (message != null) Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+          DialogButton("Cancel", onClick = onDismiss, modifier = Modifier.focusRequester(cancelFocus))
+          DialogButton(confirmLabel, onClick = onConfirm)
+        }
+      }
+    }
+  }
+}
+
+@Composable
+private fun ChannelMenuDialog(
+  channel: ChannelEntity,
+  bookmarked: Boolean,
+  failed: Boolean,
+  touchMode: Boolean,
+  onToggleBookmark: () -> Unit,
+  onDelete: () -> Unit,
+  onDismiss: () -> Unit,
+) {
+  val firstFocus = remember { FocusRequester() }
+  // Opened by holding OK: its repeats and release would click the first option. Keys count from a fresh press.
+  var armed by remember { mutableStateOf(false) }
+  Dialog(onDismissRequest = onDismiss) {
+    LaunchedEffect(Unit) { if (!touchMode) firstFocus.requestFocus() }
+    DialogCard {
+      Column(
+        Modifier.padding(16.dp).onPreviewKeyEvent { event ->
+          if (!armed && event.type == KeyEventType.KeyDown && event.nativeKeyEvent.repeatCount == 0) armed = true
+          !armed
+        },
+        verticalArrangement = Arrangement.spacedBy(RowGap),
+      ) {
+        Text(
+          channel.displayName,
+          color = MaterialTheme.colorScheme.onSurface,
+          style = MaterialTheme.typography.titleMedium,
+          maxLines = 2,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.padding(start = 6.dp, top = 4.dp),
+        )
+        if (failed) {
+          Text("Didn't play last time", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 6.dp))
+        }
+        Spacer(Modifier.height(4.dp))
+        MenuOption(if (bookmarked) "Remove from favourites" else "Add to favourites", MeghIcons.Star, onToggleBookmark, Modifier.focusRequester(firstFocus))
+        MenuOption("Delete channel", MeghIcons.Delete, onDelete, tint = MeghLive)
+        Text(
+          "A deleted channel comes back with the next refresh.",
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          style = MaterialTheme.typography.labelMedium,
+          modifier = Modifier.padding(start = 6.dp, top = 4.dp),
+        )
+      }
+    }
+  }
+}
+
+@Composable
+private fun MenuOption(label: String, icon: ImageVector, onClick: () -> Unit, modifier: Modifier = Modifier, tint: Color = MaterialTheme.colorScheme.primary) {
+  val interaction = remember { MutableInteractionSource() }
+  Row(
+    modifier.fillMaxWidth().panelRow(interaction, onClick = onClick).heightIn(min = 48.dp).padding(horizontal = 16.dp),
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+    Spacer(Modifier.width(14.dp))
+    Text(label, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.bodyLarge)
+  }
+}
 
 @Composable
 private fun RefreshDialog(refreshing: Boolean, message: String?, onDismiss: () -> Unit) {
@@ -851,9 +1166,9 @@ private fun RefreshDialog(refreshing: Boolean, message: String?, onDismiss: () -
     onDismissRequest = { if (!refreshing) onDismiss() },
     properties = DialogProperties(dismissOnBackPress = !refreshing, dismissOnClickOutside = false),
   ) {
-    Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp)) {
+    DialogCard {
       Column(
-        Modifier.widthIn(min = 280.dp).padding(28.dp),
+        Modifier.padding(28.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(18.dp),
       ) {
@@ -862,7 +1177,7 @@ private fun RefreshDialog(refreshing: Boolean, message: String?, onDismiss: () -
           Text("Refreshing channels…", color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleSmall)
         } else if (message != null) {
           Text(message, color = MaterialTheme.colorScheme.onSurface, style = MaterialTheme.typography.titleSmall)
-          Box(Modifier.fillMaxWidth()) { CloseButton(onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) }
+          Box(Modifier.fillMaxWidth()) { DialogButton("Close", onClick = onDismiss, modifier = Modifier.align(Alignment.CenterEnd)) }
         }
       }
     }
@@ -870,11 +1185,11 @@ private fun RefreshDialog(refreshing: Boolean, message: String?, onDismiss: () -
 }
 
 @Composable
-private fun CloseButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+private fun DialogButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
   val interaction = remember { MutableInteractionSource() }
   val focused by interaction.collectIsFocusedAsState()
   Text(
-    "Close",
+    label,
     color = MaterialTheme.colorScheme.primary,
     style = MaterialTheme.typography.titleSmall,
     modifier =
