@@ -30,7 +30,7 @@ interface CategoryDao {
 
 @Dao
 interface CountryDao {
-  // Leaves out a country whose every channel the user deleted, instead of offering an empty list until the next refresh.
+  // Leaves out a country whose channels were all deleted.
   @Query(
     "SELECT * FROM countries WHERE code IN (SELECT countryCode FROM channels WHERE id NOT IN (SELECT channelId FROM deleted_channels)) ORDER BY sortOrder"
   )
@@ -51,9 +51,7 @@ interface CountryDao {
 
 data class ChannelSelection(val id: String, val selectedSourceUrl: String?)
 
-// Every list is alphabetical by name (source order only breaks ties): the source order is
-// playlist-by-playlist, which reads as random when scrolling a single country or category.
-// Lists leave out channels the user deleted (deleted_channels) until the next refresh.
+// Lists sort by name (source order reads as random) and leave out deleted channels.
 @Dao
 interface ChannelDao {
   @Query("SELECT * FROM channels WHERE id NOT IN (SELECT channelId FROM deleted_channels) ORDER BY displayName COLLATE NOCASE, sortOrder") fun observeAll(): Flow<List<ChannelEntity>>
@@ -82,12 +80,9 @@ interface ChannelDao {
 
   @Query("SELECT * FROM channels WHERE id = :id") fun observeById(id: String): Flow<ChannelEntity?>
 
-  /** id -> selectedSourceUrl for every channel, fetched in one query (no N+1) so a refresh over
-   * thousands of channels can preserve manual Source picks without a per-channel round trip. */
   @Query("SELECT id, selectedSourceUrl FROM channels") suspend fun allSelectedSources(): List<ChannelSelection>
 
-  // @Upsert, not @Insert(REPLACE): REPLACE is a SQLite DELETE-then-INSERT under the hood, which
-  // would fire bookmarks' ON DELETE CASCADE for every surviving channel on every single refresh.
+  // Not @Insert(REPLACE): that deletes and reinserts, and the delete cascades to bookmarks.
   @Upsert suspend fun upsertAll(channels: List<ChannelEntity>)
 
   @Query("DELETE FROM channels WHERE id IN (:ids)") suspend fun deleteByIds(ids: List<String>)
@@ -108,13 +103,7 @@ interface StreamUrlDao {
 
   @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertAll(urls: List<StreamUrlEntity>)
 
-  /**
-   * Replaces the entire table in one go. A refresh rebuilds [urlsByChannel] for essentially the
-   * whole catalog already (every channel found in the freshly-fetched playlists), and channels
-   * that disappeared are cascade-deleted separately — so a per-channel `WHERE channelId IN (...)`
-   * delete isn't just redundant, it's unsafe: with ~11k channels it blows past SQLite's default
-   * 999-bind-variable limit and crashes every refresh.
-   */
+  // The whole table: a per-channel `IN (...)` delete over ~11k ids exceeds SQLite's bind-parameter limit.
   @Transaction
   suspend fun replaceAll(urlsByChannel: Map<String, List<StreamUrlEntity>>) {
     deleteAll()

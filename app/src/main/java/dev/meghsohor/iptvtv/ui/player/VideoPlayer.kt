@@ -100,32 +100,15 @@ import kotlinx.coroutines.flow.emptyFlow
 
 private const val ControlsAutoHideMs = 5000
 
-/** Consecutive live-edge rejoins before a stream is treated as failing rather than just paused too long. */
+/** Live-edge rejoins before a stream counts as failed. */
 private const val MaxLiveRejoins = 3
 
-/** Commands from outside the video surface — a TV remote's keys, or Back. */
 enum class PlayerCommand { TogglePlayPause, Play, Pause, ShowControls, HideControls }
 
 /**
- * Plays [streamUrls] in order, starting from index 0 (the manually-selected Source is already
- * moved to the front by the ViewModel). On playback error, automatically retries the next URL —
- * silent to the user, no interruption — per "Multiple sources per channel" in the spec. Once every
- * URL has failed (including "no internet at all", which surfaces the same way), that's no longer
- * silent — an error overlay with a Retry button takes over.
- *
- * A tap on the video goes to [onTap] first — returning true means the caller used it (e.g. to
- * close the side panel); otherwise it shows or hides the controls.
- * [controlsAllowed] = false keeps the controller hidden, since it would sit underneath the panel.
- * [controlsEdgeInset] keeps the bottom control row that far in from both screen edges.
- * [touchControls] makes play/pause tappable and adds volume/mute — TV remotes have keys for those.
- * [onPlaybackActiveChange] reports whether the stream is meant to be playing: not paused, not failed.
- * [onAllSourcesFailed] fires when the error screen appears for a reason other than the device being
- * offline, [onPlaying] each time the stream reaches playback.
- *
- * [channelId] identifies the channel independently of [streamUrls] — two different channels can
- * legitimately expose the exact same mirror list (duplicate source entries happen in iptv-org's
- * data), and a switch between them must still restart playback even though the URL list, compared
- * by value, wouldn't look like it changed.
+ * Plays [streamUrls] in order, moving on when one fails; the error screen shows once all have failed.
+ * [channelId] restarts playback on a switch even when two channels share the same URL list.
+ * [onTap] returns true when it used the tap. [onAllSourcesFailed] isn't called while offline.
  */
 @Composable
 fun VideoPlayer(
@@ -146,14 +129,13 @@ fun VideoPlayer(
 ) {
   val context = LocalContext.current
   val player = remember {
-    // Decoder fallback: low-end TV chips sometimes fail to open their preferred (hardware) decoder
-    // for a stream's profile — try the next one instead of failing the whole source.
+    // Low-end TV chips can fail to open their preferred hardware decoder for a stream's profile.
     ExoPlayer.Builder(context, DefaultRenderersFactory(context).setEnableDecoderFallback(true))
       .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
       .setHandleAudioBecomingNoisy(true)
       .build()
   }
-  // What the controller sees: playback speed is meaningless on a live stream, so drop it from the settings menu.
+  // Playback speed means nothing on live TV: drop it from the settings menu.
   val controllerPlayer = remember(player) {
     object : ForwardingPlayer(player) {
       override fun getAvailableCommands(): Player.Commands =
@@ -163,11 +145,7 @@ fun VideoPlayer(
         command != Player.COMMAND_SET_SPEED_AND_PITCH && super.isCommandAvailable(command)
     }
   }
-  // Unkeyed (not `remember(streamUrls)`): the error listener below is installed once, in a
-  // DisposableEffect keyed on `player`, and closes over these state objects at that point. If a
-  // channel switch replaced them with fresh ones, the listener would keep mutating an orphaned
-  // pair nothing reads any more — fallback and the error overlay would silently stop working
-  // after the very first switch. The load effect below resets their values on a switch instead.
+  // Unkeyed: the player listener closes over these once; the load effect resets them on a switch.
   var attempt by remember { mutableStateOf(SourceAttempt()) }
   var retryTick by remember(channelId, streamUrls) { mutableIntStateOf(0) }
   var playbackError by remember { mutableStateOf<PlaybackException?>(null) }
@@ -177,7 +155,7 @@ fun VideoPlayer(
   var playerView by remember { mutableStateOf<PlayerView?>(null) }
   var muted by remember { mutableStateOf(false) }
   var playing by remember { mutableStateOf(true) }
-  // Bumped on each play/pause by the user; the centre icon replays its animation per bump.
+  // Replays the centre animation.
   var pulse by remember { mutableIntStateOf(0) }
   var volume by remember { mutableFloatStateOf(1f) }
   val currentStreamUrls by rememberUpdatedState(streamUrls)
@@ -188,17 +166,16 @@ fun VideoPlayer(
   val currentOnPlaying by rememberUpdatedState(onPlaying)
   val liveRejoins = remember { intArrayOf(0) }
 
-  // Each change to `attempt` relaunches the load effect; a final failure leaves it alone, so
-  // nothing reloads behind the error overlay.
+  // Each new attempt relaunches the load effect; the final failure doesn't, so nothing reloads behind the error screen.
   fun onSourceFailed(error: PlaybackException) {
     val url = currentStreamUrls.getOrNull(attempt.index)
     attempt =
       when {
         error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED && !attempt.asHls && url != null && !url.looksLikeHls() ->
           attempt.copy(asHls = true)
-        attempt.index + 1 < currentStreamUrls.size -> SourceAttempt(attempt.index + 1) // next mirror, silently
+        attempt.index + 1 < currentStreamUrls.size -> SourceAttempt(attempt.index + 1)
         else -> {
-          playbackError = error // every mirror failed (or there was only ever one) — stop hiding it
+          playbackError = error
           if (!context.isOffline(error)) currentOnAllSourcesFailed()
           return
         }
@@ -209,8 +186,7 @@ fun VideoPlayer(
     val listener =
       object : Player.Listener {
         override fun onPlayerError(error: PlaybackException) {
-          // Paused longer than the stream keeps in its live window: nothing wrong with the source,
-          // just rejoin at the live edge rather than failing over to the next one.
+          // Paused past the live window: the source is fine, rejoin at the live edge.
           if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW && liveRejoins[0] < MaxLiveRejoins) {
             liveRejoins[0]++
             player.seekToDefaultPosition()
@@ -220,7 +196,7 @@ fun VideoPlayer(
           onSourceFailed(error)
         }
 
-        // Paused, the controls stay up and the picture is dimmed; playing, they time out as usual.
+        // Paused: the controls stay up over a dimmed picture.
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
           playing = playWhenReady
           val view = playerView ?: return
@@ -229,7 +205,7 @@ fun VideoPlayer(
           if (view.isControllerFullyVisible) view.showController() // re-arm with the new timeout
         }
 
-        // Most IPTV streams have no captions, and Media3 would show a permanently greyed-out CC button for them.
+        // Most streams have no captions, and Media3 would show a disabled CC button.
         override fun onTracksChanged(tracks: Tracks) {
           playerView?.setShowSubtitleButton(tracks.containsType(C.TRACK_TYPE_TEXT))
         }
@@ -238,10 +214,12 @@ fun VideoPlayer(
           val state = player.playbackState
           keepScreenOn = player.playWhenReady && state != Player.STATE_IDLE && state != Player.STATE_ENDED
           buffering = state == Player.STATE_BUFFERING
-          if (state == Player.STATE_READY && events.contains(Player.EVENT_PLAYBACK_STATE_CHANGED)) {
-            liveRejoins[0] = 0
-            currentOnPlaying()
-          }
+          if (state == Player.STATE_READY) liveRejoins[0] = 0
+        }
+
+        // Not STATE_READY: that is also reached paused, before anything has played.
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+          if (isPlaying) currentOnPlaying()
         }
       }
     player.addListener(listener)
@@ -251,14 +229,14 @@ fun VideoPlayer(
     }
   }
 
-  // Media3's PlayerView never holds the screen awake itself — without this a phone locks mid-stream.
+  // PlayerView doesn't keep the screen on by itself.
   val hostView = LocalView.current
   DisposableEffect(keepScreenOn) {
     hostView.keepScreenOn = keepScreenOn
     onDispose { hostView.keepScreenOn = false }
   }
 
-  // Live TV has nothing to resume from: drop the connection while backgrounded, rejoin at the live edge on return.
+  // Live TV can't resume: disconnect in the background, rejoin at the live edge.
   val lifecycleOwner = LocalLifecycleOwner.current
   DisposableEffect(lifecycleOwner, player) {
     val observer = LifecycleEventObserver { _, event ->
@@ -286,7 +264,7 @@ fun VideoPlayer(
     if (player.playWhenReady == play) return
     player.playWhenReady = play
     pulse++
-    if (currentControlsAllowed && playbackError == null) playerView?.showController() // so the new state is visible
+    if (currentControlsAllowed && playbackError == null) playerView?.showController()
   }
 
   LaunchedEffect(player, playerCommands) {
@@ -301,8 +279,7 @@ fun VideoPlayer(
     }
   }
 
-  // Which channel attempt/playbackError currently belong to. Resetting them here, inside the one
-  // load effect, means a switch loads the new channel exactly once, at its first mirror.
+  // The channel attempt and playbackError belong to; a switch resets them here, so it loads once, at the first mirror.
   val loadedFor = remember { arrayOfNulls<Pair<String, List<String>>>(1) }
   LaunchedEffect(channelId, streamUrls, attempt, retryTick) {
     val key = channelId to streamUrls
@@ -320,12 +297,9 @@ fun VideoPlayer(
       player.stop()
       player.clearMediaItems()
     } else {
-      // A fresh decoder per stream: ExoPlayer would otherwise reuse the running one across channels,
-      // and some decoders (the emulator's, some cheap TV chipsets) then paint a lower-resolution
-      // channel unscaled into the old channel's larger buffers, leaving its last frame showing around it.
+      // A fresh decoder per stream: a reused one can leave the old channel's larger frame around a smaller new one.
       player.stop()
-      // If a stream's format has no module in this build, Media3 throws from setMediaItem instead of
-      // reporting a playback error — how every DASH channel crashed the app before its module was added.
+      // A format with no Media3 module throws here instead of reporting a playback error.
       try {
         player.setMediaItem(MediaItem.Builder().setUri(url).apply { if (attempt.asHls) setMimeType(MimeTypes.APPLICATION_M3U8) }.build())
         player.prepare()
@@ -337,7 +311,7 @@ fun VideoPlayer(
     }
   }
 
-  // Touching our own Compose controls doesn't reach Media3, so its hide timer needs a nudge.
+  // Media3's hide timer doesn't see touches on our Compose controls.
   fun keepControlsAlive() {
     playerView?.takeIf { it.isControllerFullyVisible }?.showController()
   }
@@ -348,29 +322,25 @@ fun VideoPlayer(
       factory = {
         PlayerView(it).apply {
           useController = true
-          // The controller grabs D-pad focus for its play/pause button whenever it shows; from then
-          // on remote keys went to Media3 instead of the app (OK did nothing, arrows no longer opened
-          // the panel). Keep it out of the focus chain — the app maps the remote keys itself.
+          // Out of the focus chain: the controller grabbed D-pad focus, and the app handles the remote keys itself.
           descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
           isFocusable = false
           controllerAutoShow = false
           controllerShowTimeoutMs = ControlsAutoHideMs
-          // Animated, Media3 keeps the controller VISIBLE (and says so to its visibility listener) for
-          // ~2 s after the bars have gone — so Back and OK acted on controls nobody could see.
+          // Animated, Media3 reports the controller visible for ~2 s after it has gone.
           setControllerAnimationEnabled(false)
-          // Live channels only — no seeking, no next/previous item to step to.
           setShowRewindButton(false)
           setShowFastForwardButton(false)
           setShowPreviousButton(false)
           setShowNextButton(false)
-          setShowSubtitleButton(false) // until the stream turns out to carry captions — see onTracksChanged
-          // Play/pause lives in the bottom row instead (see ControlsRow); the centre only gets PlayPausePulse.
+          setShowSubtitleButton(false) // until onTracksChanged finds captions
+          // Play/pause is in ControlsRow; the centre only gets PlayPausePulse.
           findViewById<View>(Media3R.id.exo_center_controls)?.visibility = View.GONE
-          // No built-in setter for the time bar itself — hide it and the whole time block (position, "·", duration) directly.
+          // No setter for the time bar.
           findViewById<View>(Media3R.id.exo_progress)?.visibility = View.GONE
           findViewById<View>(Media3R.id.exo_time)?.visibility = View.GONE
 
-          // Media3's controller has no theme hook, so recolor the kept pieces directly.
+          // The controller has no theme hook.
           findViewById<ImageButton>(Media3R.id.exo_subtitle)?.imageTintList = ColorStateList.valueOf(MeghCyan.toArgb())
           findViewById<ImageButton>(Media3R.id.exo_settings)?.imageTintList = ColorStateList.valueOf(MeghCyan.toArgb())
           findViewById<View>(Media3R.id.exo_controls_background)?.background = edgeScrim(resources.displayMetrics.density, dimmed = false)
@@ -385,11 +355,10 @@ fun VideoPlayer(
               currentOnControlsVisibilityChange(controlsVisible)
             }
           )
-          // With the menu open a tap only closes it; otherwise it shows or hides the controls.
           installTapHandler { view ->
             if (!currentOnTap()) {
               when {
-                playbackError != null -> Unit // only the error screen's buttons mean anything there
+                playbackError != null -> Unit
                 view.isControllerFullyVisible -> view.hideController()
                 currentControlsAllowed -> view.showController()
               }
@@ -400,7 +369,7 @@ fun VideoPlayer(
       },
       update = { view ->
         view.player = controllerPlayer
-        // Also hidden under the error overlay: controls left up there would still take taps and Back.
+        // Controls left under the error screen would still take taps and Back.
         if (!controlsAllowed || playbackError != null) view.hideController()
       },
     )
@@ -425,35 +394,30 @@ fun VideoPlayer(
           if (it > 0f) muted = false
         },
         onTouch = ::keepControlsAlive,
-        // Sits in the left half of Media3's 60dp bottom bar, where its (hidden) time labels would be.
-        // Excluded from the back-swipe zone at the screen edge, which otherwise swallowed taps on play/pause.
+        // Excluded from the edge back-swipe zone, which swallowed taps on play/pause.
         modifier = Modifier.align(Alignment.BottomStart).height(60.dp).systemGestureExclusion().padding(start = controlsEdgeInset),
       )
     }
 
-    // End padding keeps it in the middle of the part of the video the side panel isn't covering.
+    // Centred on the part of the video the panel doesn't cover.
     PlayPausePulse(playing = playing, trigger = pulse, modifier = Modifier.align(Alignment.Center).padding(end = overlayEndPadding))
 
-    // No pointer handling, so it never blocks a tap.
     if (buffering && playbackError == null) {
       CircularProgressIndicator(
         color = MeghCyan,
         strokeWidth = 3.dp,
-        // End padding shifts it to the centre of the part of the video the side panel isn't covering.
         modifier = Modifier.align(Alignment.Center).padding(end = overlayEndPadding).size(48.dp),
       )
     }
 
     playbackError?.let { error ->
       PlaybackErrorOverlay(
-        // Mostly asked of the device, since one unreachable stream server times out exactly like a
-        // dead connection does. But an HTTP error status means a server answered: never "offline".
         offline = remember(error) { context.isOffline(error) },
         onDelete = onDeleteChannel,
         onRetry = {
           attempt = SourceAttempt()
           playbackError = null
-          retryTick++ // forces the load effect to re-run even when attempt was already the first one
+          retryTick++ // re-runs the load effect even at the first mirror
         },
         endPadding = overlayEndPadding,
         focusRetry = controlsAllowed,
@@ -463,10 +427,7 @@ fun VideoPlayer(
   }
 }
 
-/**
- * Netflix/Prime-style scrim behind the controls: dark at the top (under the channel badge) and the
- * bottom (under the control row). The middle is clear while playing and [dimmed] while paused.
- */
+/** Dark behind the top and bottom controls; the middle is clear, or [dimmed] while paused. */
 private fun edgeScrim(density: Float, dimmed: Boolean): Drawable {
   fun fade(orientation: GradientDrawable.Orientation, alpha: Float) =
     GradientDrawable(orientation, intArrayOf(MeghBackground.copy(alpha = alpha).toArgb(), android.graphics.Color.TRANSPARENT))
@@ -479,19 +440,12 @@ private fun edgeScrim(density: Float, dimmed: Boolean): Drawable {
   }
 }
 
-/**
- * Which mirror is being tried, and whether as forced HLS: Media3 picks the format from the URL's
- * extension, ~300 iptv-org URLs have none, and the HLS ones among them fail as "unrecognized file" —
- * such a mirror gets one more try, as HLS, before moving on.
- */
+/** Media3 picks the format from the URL extension; ~300 URLs have none, so an unrecognized one gets one more try as HLS. */
 private data class SourceAttempt(val index: Int = 0, val asHls: Boolean = false)
 
 private fun String.looksLikeHls() = substringBefore('?').contains(".m3u8", ignoreCase = true)
 
-/**
- * Taps, ignoring drags. Consumes every touch, so PlayerView's own click-to-toggle never runs
- * alongside ours; touches on the controller's buttons are handled by those buttons and never reach this.
- */
+/** Consumes every touch, so PlayerView's own tap-to-toggle doesn't also run; the controller's buttons get theirs first. */
 @SuppressLint("ClickableViewAccessibility")
 private fun PlayerView.installTapHandler(onTap: (PlayerView) -> Unit) {
   val view = this
@@ -501,14 +455,14 @@ private fun PlayerView.installTapHandler(onTap: (PlayerView) -> Unit) {
       object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(e: MotionEvent) = true
 
-        // On tap-up, not "confirmed": with no double tap to wait for, that would only add ~300 ms.
+        // Not onSingleTapConfirmed: with no double tap to wait for, that only adds ~300 ms.
         override fun onSingleTapUp(e: MotionEvent): Boolean {
           onTap(view)
           return true
         }
       },
     )
-      // The listener also implements double-tap, which would swallow a quick second tap; nothing uses it.
+      // Double-tap tracking would swallow a quick second tap.
       .apply { setOnDoubleTapListener(null) }
   setOnTouchListener { _, event ->
     detector.onTouchEvent(event)
@@ -541,7 +495,7 @@ private fun ControlsRow(
     },
     verticalAlignment = Alignment.CenterVertically,
   ) {
-    // On TV it only shows the state (OK and the media keys toggle it): not clickable, so never a D-pad stop.
+    // On TV only a state indicator, and so not a D-pad stop: OK and the media keys toggle it.
     Box(
       Modifier.size(48.dp).clip(CircleShape).then(if (touchControls) Modifier.clickable(onClick = onTogglePlay) else Modifier),
       contentAlignment = Alignment.Center,
@@ -565,7 +519,7 @@ private fun ControlsRow(
       )
     }
     val colors = SliderDefaults.colors(thumbColor = MeghCyan, activeTrackColor = MeghCyan, inactiveTrackColor = Color.White.copy(alpha = 0.3f))
-    // Material 3's default slider is a chunky 16dp track with a bar thumb — far too heavy over video.
+    // The default 16dp track is too heavy over video.
     Slider(
       value = if (muted) 0f else volume,
       onValueChange = onVolumeChange,
@@ -595,11 +549,9 @@ private fun PlaybackErrorOverlay(
   modifier: Modifier = Modifier,
 ) {
   val retryFocusRequester = remember { FocusRequester() }
-  // Straight to Retry when it's the only thing on screen — but not while the side panel is open,
-  // where it would pull D-pad focus out of the list being browsed.
+  // Not while the panel is open: it would pull focus out of the list.
   LaunchedEffect(focusRetry) { if (focusRetry) retryFocusRequester.requestFocus() }
 
-  // endPadding keeps the message clear of the side panel when it's open over the video.
   Box(modifier.background(MeghBackground.copy(alpha = 0.92f)).padding(end = endPadding), contentAlignment = Alignment.Center) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
       Text(
@@ -614,22 +566,21 @@ private fun PlaybackErrorOverlay(
       )
       Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         OverlayButton("Retry", onClick = onRetry, primary = true, modifier = Modifier.focusRequester(retryFocusRequester))
-        // Offline says nothing about the channel, so no Delete there.
+        // Offline says nothing about the channel.
         if (!offline) OverlayButton("Delete channel", onClick = onDelete, primary = false)
       }
     }
   }
 }
 
-/** Mostly asked of the device, since one unreachable stream server times out exactly like a dead
- * connection does. But an HTTP error status means a server answered: never "offline". */
+/** An HTTP error means a server answered, so never offline; otherwise ask the device. */
 private fun Context.isOffline(error: PlaybackException) =
   error.errorCode != PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && !hasInternet()
 
 private fun Context.hasInternet(): Boolean {
   val connectivity = getSystemService(ConnectivityManager::class.java) ?: return true
   val capabilities = connectivity.getNetworkCapabilities(connectivity.activeNetwork) ?: return false
-  // VALIDATED too: Wi-Fi whose router has lost its uplink, or a captive portal, still claims INTERNET.
+  // VALIDATED: Wi-Fi without internet, or a captive portal, still claims INTERNET.
   return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
     capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
 }
@@ -656,13 +607,10 @@ private fun OverlayButton(label: String, onClick: () -> Unit, primary: Boolean, 
   )
 }
 
-// Brand cyan, softened: at full strength it glared over the picture.
+// Softened: full cyan glares over the picture.
 private val PulseColor = MeghCyan.copy(alpha = 0.75f)
 
-/**
- * The centre "just played / just paused" effect: a thin-line icon that zooms in and fades out.
- * Nothing on first composition; each change of [trigger] replays it.
- */
+/** Zooms in and fades out on each change of [trigger]; nothing on first composition. */
 @Composable
 private fun PlayPausePulse(playing: Boolean, trigger: Int, modifier: Modifier = Modifier) {
   val progress = remember { Animatable(1f) }

@@ -17,10 +17,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 
-/** Outcome of a [IptvRepository.refresh] — mirrors the "Refresh mechanism" section of the spec. */
 data class RefreshResult(val added: Int, val removed: Int, val bookmarksRemoved: Int)
 
-/** SQLite's default max bound parameters per statement (SQLITE_MAX_VARIABLE_NUMBER) — stay under it for `IN (:ids)` queries. */
+// Under SQLite's default limit of 999 bound parameters per statement.
 private const val SqliteMaxBindVariables = 900
 
 class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgClient = IptvOrgClient()) {
@@ -30,12 +29,11 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
   val allChannels: Flow<List<ChannelEntity>> = db.channelDao().observeAll()
   val bookmarkedChannels: Flow<List<ChannelEntity>> = db.channelDao().observeBookmarked()
 
-  /** Just the ids — for validating against, without materializing ~11k full rows. */
   suspend fun allChannelIds(): List<String> = db.channelDao().allIds()
 
   suspend fun hasChannels(): Boolean = db.channelDao().hasAny()
 
-  /** Drops categories/countries with no channels — what refresh already does, for data stored before it did. */
+  // What refresh does, for data stored before it did.
   suspend fun pruneEmptyMenus() =
     db.withTransaction {
       db.categoryDao().deleteUnused()
@@ -58,23 +56,16 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
 
   suspend fun removeBookmark(channelId: String) = db.bookmarkDao().remove(channelId)
 
-  /** Ids of channels whose every source failed the last time they were played. */
   val failedChannelIds: Flow<List<String>> = db.failedChannelDao().observeIds()
 
   suspend fun markFailed(channelId: String) = db.failedChannelDao().add(FailedChannelEntity(channelId, System.currentTimeMillis()))
 
   suspend fun clearFailed(channelId: String) = db.failedChannelDao().remove(channelId)
 
-  /** Hides the channel from every list until the next refresh; its favourite comes back with it. */
   suspend fun deleteChannel(channelId: String) = db.deletedChannelDao().add(DeletedChannelEntity(channelId))
 
   suspend fun setSelectedSource(channelId: String, url: String?) = db.channelDao().setSelectedSourceUrl(channelId, url)
 
-  /**
-   * Full pipeline from the spec's "Refresh mechanism": fetch -> rebuild -> diff by `channel@feed`
-   * -> preserve bookmarks/manual picks for survivors -> single transaction. If the fetch fails
-   * outright (e.g. offline), this throws before anything is touched — never a partial overwrite.
-   */
   private class BuiltChannels(
     val channels: List<ChannelEntity>,
     val urlsByChannel: Map<String, List<StreamUrlEntity>>,
@@ -82,6 +73,7 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
     val countries: List<CountryEntity>,
   )
 
+  // Everything is fetched before the database is touched, so a failed fetch leaves the old data intact.
   suspend fun refresh(): RefreshResult {
     val categoryCsv = client.fetchCategoriesCsv()
     val countryCsv = client.fetchCountriesCsv()
@@ -93,15 +85,13 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
 
     val existingSelections = db.channelDao().allSelectedSources().associate { it.id to it.selectedSourceUrl }
 
-    // CSV/M3U parsing and diff-building for ~11k channels is CPU-bound — keep it off the caller's
-    // (usually Main) dispatcher so the UI stays responsive while a refresh runs.
+    // CPU-bound for ~11k channels: off the main thread.
     val built =
       withContext(Dispatchers.Default) {
         val categoryRows = parseCsv(categoryCsv)
         val countryRows = parseCsv(countryCsv)
         val channelRows = parseCsv(channelCsv).associateBy { it.getValue("id") }
 
-        // First-seen order across all playlists; kept as sortOrder, which only breaks ties in the by-name lists.
         val entriesByKey = LinkedHashMap<String, MutableList<M3uEntry>>()
         for ((_, text) in playlists) {
           for (entry in parseM3u(text)) {
@@ -114,7 +104,7 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
         val urlsByChannel = mutableMapOf<String, List<StreamUrlEntity>>()
         for ((tvgId, entries) in entriesByKey) {
           val channelId = tvgId.substringBefore('@')
-          val channelRow = channelRows[channelId] ?: continue // not in the metadata database, skip
+          val channelRow = channelRows[channelId] ?: continue
           val urls = entries.map { it.url }
           val preservedSelection = existingSelections[tvgId]?.takeIf { it in urls }
           newChannels +=
@@ -128,9 +118,7 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
             )
           urlsByChannel[tvgId] = entries.mapIndexed { idx, e -> StreamUrlEntity(channelId = tvgId, url = e.url, sortOrder = idx) }
         }
-        // Only categories and countries that at least one playable channel is in — iptv-org defines
-        // plenty (the "XXX" category, Antarctica, ...) its public playlists never carry a stream for,
-        // and each was only a dead end. One reappears by itself if it ever gets a channel.
+        // iptv-org defines categories and countries its playlists have no stream for ("XXX", Antarctica).
         val usedCategoryIds = newChannels.flatMapTo(HashSet()) { it.categoryIds.split(';') }
         val usedCountryCodes = newChannels.mapTo(HashSet()) { it.countryCode }
         BuiltChannels(
@@ -157,12 +145,11 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
     db.withTransaction {
       db.categoryDao().replaceAll(built.categories)
       db.countryDao().replaceAll(built.countries)
-      // Chunked: Room expands `WHERE id IN (:ids)` to one bind variable per id, and a removal
-      // batch of 999+ channels (e.g. a big iptv-org cleanup) would exceed SQLite's default limit.
-      for (chunk in removedIds.chunked(SqliteMaxBindVariables)) db.channelDao().deleteByIds(chunk) // cascades to stream_urls + bookmarks
+      // Chunked: `IN (:ids)` binds one parameter per id. Cascades to stream_urls and bookmarks.
+      for (chunk in removedIds.chunked(SqliteMaxBindVariables)) db.channelDao().deleteByIds(chunk)
       db.channelDao().upsertAll(built.channels)
       db.streamUrlDao().replaceAll(built.urlsByChannel)
-      db.deletedChannelDao().clear() // a refresh brings every deleted channel back
+      db.deletedChannelDao().clear()
       db.failedChannelDao().deleteOrphans()
     }
 

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Lucide "captions" (lucide.dev, ISC licence), filled for the "on" state: the lines are holes, since the button is tinted one colour. They wind the other way from the outline, so they stay holes under nonZero too: fillType is ignored before API 24. -->
+<!-- Lucide "captions" (lucide.dev, ISC licence), filled. The lines are holes wound against the outline, so they stay holes before API 24, which ignores fillType. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"

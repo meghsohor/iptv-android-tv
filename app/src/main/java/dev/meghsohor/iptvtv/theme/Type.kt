@@ -7,8 +7,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import dev.meghsohor.iptvtv.R
 
-// Outfit (SIL Open Font License), a geometric sans close to the MeghTV wordmark. Static weights,
-// not the variable font: weight axes only work from Android 8, and minSdk is 6.
+// Outfit (SIL Open Font License). Static weights: the variable font's weight axis needs API 26, minSdk is 23.
 private val Outfit =
   FontFamily(
     Font(R.font.outfit_regular, FontWeight.Normal),

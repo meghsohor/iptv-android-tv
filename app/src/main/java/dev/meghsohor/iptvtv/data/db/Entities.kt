@@ -5,18 +5,13 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
-/** Source order kept in [sortOrder]: menus list in it; channel lists sort by name and only use it for ties. */
 @Entity(tableName = "categories")
 data class CategoryEntity(@PrimaryKey val id: String, val name: String, val sortOrder: Int)
 
 @Entity(tableName = "countries")
 data class CountryEntity(@PrimaryKey val code: String, val name: String, val flag: String, val sortOrder: Int)
 
-/**
- * One row per iptv-org channel+feed (id = "channelId@feedId", iptv-org's own stable key).
- * Multiple stream URLs for this same feed live in [StreamUrlEntity], not here — see
- * "Multiple sources per channel" in the spec.
- */
+/** One row per channel feed, id "channelId@feedId". Its mirror URLs are [StreamUrlEntity] rows. */
 @Entity(
   tableName = "channels",
   indices = [Index("countryCode"), Index("categoryIds")],
@@ -25,10 +20,10 @@ data class ChannelEntity(
   @PrimaryKey val id: String,
   val displayName: String,
   val countryCode: String,
-  /** Semicolon-joined, matching iptv-org's own multi-value convention (see owners/categories in channels.csv). */
+  /** Semicolon-joined, as in iptv-org's channels.csv. */
   val categoryIds: String,
   val sortOrder: Int,
-  /** The user's manual Source pick (a URL from this channel's [StreamUrlEntity] rows), or null = automatic order. */
+  /** A URL picked by hand, tried first; null for the stored order. */
   val selectedSourceUrl: String? = null,
 )
 
@@ -60,10 +55,10 @@ data class StreamUrlEntity(val channelId: String, val url: String, val sortOrder
 )
 data class BookmarkEntity(@PrimaryKey val channelId: String, val addedAt: Long)
 
-/** A channel whose every source failed the last time it was played. Kept across refreshes; dropped once the channel leaves the catalogue. */
+/** Every source failed the last time it played. */
 @Entity(tableName = "failed_channels")
 data class FailedChannelEntity(@PrimaryKey val channelId: String, val failedAt: Long)
 
-/** A channel the user deleted: hidden from every list until the next refresh clears this table. The row itself stays, so its favourite survives. */
+/** Hidden from every list until the next refresh; the channel row stays, so its favourite does too. */
 @Entity(tableName = "deleted_channels")
 data class DeletedChannelEntity(@PrimaryKey val channelId: String)

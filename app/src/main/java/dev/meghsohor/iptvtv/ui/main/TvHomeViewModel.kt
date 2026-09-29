@@ -20,14 +20,13 @@ import kotlinx.coroutines.launch
 
 data class TvHomeUiState(
   val panel: PanelState = PanelState.CategoriesMenu,
-  /** False until launch has picked the opening view (Favourites or Categories) — [panel] may still change before that. */
+  /** False until launch has picked the opening view; [panel] may still change before that. */
   val startupPanelChosen: Boolean = false,
   val categories: List<CategoryEntity> = emptyList(),
   val countries: List<CountryEntity> = emptyList(),
   /** Null while the current [panel]'s list is still loading. */
   val listChannels: List<ChannelEntity>? = null,
   val bookmarkedIds: Set<String> = emptySet(),
-  /** Channels whose every source failed the last time they were played. */
   val failedIds: Set<String> = emptySet(),
   val currentChannel: ChannelEntity? = null,
   val currentStreamUrls: List<String> = emptyList(),
@@ -41,14 +40,13 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
   private val panel = MutableStateFlow<PanelState>(PanelState.CategoriesMenu)
   private val currentChannelId = MutableStateFlow<String?>(null)
 
-  /** Ordered channel ids of the list [currentChannelId] was selected from — see "Channel change (zap)" in the spec. */
+  /** The list [currentChannelId] was picked from, for Channel Up/Down. */
   private val currentPlaybackList = MutableStateFlow<List<String>>(emptyList())
   private val searchQuery = MutableStateFlow("")
   private val refreshing = MutableStateFlow(false)
   private val refreshMessage = MutableStateFlow<String?>(null)
   private var startedInitialSelection = false
 
-  /** A loaded list, tagged with the panel it was loaded for. */
   private data class LoadedList(val panel: PanelState, val channels: List<ChannelEntity>)
 
   private val listChannels =
@@ -59,7 +57,7 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
         ChannelListSource.AllChannels -> repository.allChannels
         is ChannelListSource.Category -> repository.channelsByCategory(source.id)
         is ChannelListSource.Country -> repository.channelsByCountry(source.code)
-        // Debounced: each keystroke would otherwise run a LIKE scan over ~11k rows, which a low-end TV feels.
+        // Each query is a LIKE scan over ~11k rows.
         ChannelListSource.Search ->
           searchQuery.debounce(SearchDebounceMs).flatMapLatest { q -> if (q.isBlank()) flowOf(emptyList()) else repository.search(q) }
       }.map { LoadedList(state, it) }
@@ -92,8 +90,7 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
       listChannels,
       combine(bookmarkedIds, failedIds, ::Pair),
     ) { (p, chosen), cats, countries, loaded, (bm, failed) ->
-      // Right after a panel change, the previous panel's list is still the latest one loaded —
-      // report "loading" rather than show it (and its count) under the new heading.
+      // Right after a panel change the latest list is still the previous panel's: report "loading".
       BrowseState(p, chosen, cats, countries, loaded.channels.takeIf { loaded.panel == p }, bm, failed)
     }
 
@@ -109,12 +106,9 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
           }
         }
       }
-      // A refresh can cascade-delete the row for whatever's currently playing (or channel zap can
-      // land on an id a refresh just removed) — keep the last known-good channel/URLs instead of
-      // dropping to the "nothing playing" banner mid-watch; refresh only updates the dataset.
+      // A refresh can delete the playing channel's row: keep playing it rather than drop to the banner.
       .runningReduce { previous, new -> if (new.requestedId != null && new.currentChannel == null) previous else new }
-      // Shared for the ViewModel's lifetime: uiState stops collecting 5 s into the background, and a
-      // restarted chain would have no "last good" state to fall back on, tearing the player down.
+      // Eagerly: uiState stops collecting in the background, and a restart would lose the last good state.
       .stateIn(viewModelScope, SharingStarted.Eagerly, PlayerState(null, null, emptyList()))
 
   val uiState =
@@ -140,15 +134,13 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     viewModelScope.launch {
       if (startedInitialSelection) return@launch
       startedInitialSelection = true
-      // No autoplay: open on Favourites if there are any (Categories otherwise) and wait for a pick.
       if (repository.bookmarkedChannels.first().isNotEmpty()) panel.value = PanelState.ChannelList(ChannelListSource.Favourites)
       startupPanelChosen.value = true
-      // Nothing locally yet (first launch) — fetch before the user has to think to hit Refresh.
       if (!repository.hasChannels()) onRefresh() else repository.pruneEmptyMenus()
     }
   }
 
-  /** Deleted since the last refresh. Ignored even while a list still shows them: the delete is written asynchronously. */
+  /** Deleted since the last refresh; a list can still show them until the async write lands. */
   private val deletedIds = mutableSetOf<String>()
 
   /** Where a deleted playing channel sat in [currentPlaybackList], so Channel Up/Down carry on from there. */
@@ -161,7 +153,6 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     currentPlaybackList.value = uiState.value.listChannels.orEmpty().map { it.id }.filterNot { it in deletedIds }
   }
 
-  /** Steps to the next/previous channel within [currentPlaybackList], wrapping at either end. Doesn't touch panel/nav state. */
   fun onChannelUp() = stepChannel(1)
 
   fun onChannelDown() = stepChannel(-1)
@@ -214,7 +205,6 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     searchQuery.value = query
   }
 
-  /** Up one level; a no-op at the top (Categories). */
   fun onBack() {
     panel.value = panel.value.backTarget()
   }
@@ -225,14 +215,13 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
     }
   }
 
-  /** Every source of [channelId] failed. */
   fun onPlaybackFailed(channelId: String) {
     viewModelScope.launch { repository.markFailed(channelId) }
   }
 
-  /** [channelId] reached playback; only writes when it carried a failed mark. */
+  // Unconditional: failedIds can lag a mark still being written, and Room runs writes in order.
   fun onPlaybackWorked(channelId: String) {
-    if (channelId in failedIds.value) viewModelScope.launch { repository.clearFailed(channelId) }
+    viewModelScope.launch { repository.clearFailed(channelId) }
   }
 
   fun onDeleteChannel(channelId: String) {
@@ -257,10 +246,8 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
           onFailure = { e -> "Refresh failed: ${e.message}" },
         )
       if (result.isSuccess) {
-        deletedIds.clear() // the refresh brought them back
-        // A refresh can remove channels; drop any that were in the zap list so stepping through
-        // it can't land on an id that no longer exists. The playing one stays even if removed (it
-        // keeps playing), or Channel Up/Down would have nothing to step from.
+        deletedIds.clear()
+        // Drop removed channels from the zap list, except the playing one: Up/Down step from it.
         val validIds = repository.allChannelIds().toSet()
         val playing = currentChannelId.value
         currentPlaybackList.value = currentPlaybackList.value.filter { it in validIds || it == playing }
@@ -276,6 +263,5 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
 
 private const val SearchDebounceMs = 250L
 
-/** Moves the manually-selected source (if any) to the front; automatic fallback then walks this list in order. */
 private fun orderedByPreference(urls: List<String>, preferred: String?): List<String> =
   if (preferred == null || preferred !in urls) urls else listOf(preferred) + urls.filterNot { it == preferred }

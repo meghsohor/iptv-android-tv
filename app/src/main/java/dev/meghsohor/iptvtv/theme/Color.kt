@@ -2,8 +2,7 @@ package dev.meghsohor.iptvtv.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Sampled directly from the MeghTV icon/banner artwork — the brand's actual colors, not generic
-// Material defaults.
+// Sampled from the MeghTV icon and banner.
 val MeghBackground = Color(0xFF070B1A)
 val MeghSurface = Color(0xFF10182E)
 val MeghSurfaceVariant = Color(0xFF1B2440)

@@ -1,9 +1,6 @@
 package dev.meghsohor.iptvtv.data.remote
 
-/**
- * Minimal RFC4180 CSV parser (quoted fields, embedded commas/newlines, "" escaped quotes).
- * iptv-org's CSVs are simple enough that a dependency for this would be overkill.
- */
+/** RFC4180: quoted fields can hold commas and newlines, and "" is an escaped quote. */
 internal fun parseCsv(text: String): List<Map<String, String>> {
   val rows = mutableListOf<List<String>>()
   val field = StringBuilder()
@@ -36,7 +33,7 @@ internal fun parseCsv(text: String): List<Map<String, String>> {
       }
       c == '"' -> inQuotes = true
       c == ',' -> endField()
-      c == '\r' -> {} // skip, \n (or EOF) ends the row
+      c == '\r' -> {} // \n or EOF ends the row
       c == '\n' -> endRow()
       else -> field.append(c)
     }

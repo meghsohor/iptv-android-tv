@@ -8,11 +8,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.addPathNodes
 import androidx.compose.ui.unit.dp
 
-/**
- * The app's icons, inlined so we don't ship an icon library for a few paths. Line icons after
- * Lucide (lucide.dev, ISC licence): a 24-unit grid with 2-unit strokes and round caps and joins.
- * The solid ones are filled and stroked in the same colour, which rounds their corners.
- */
+// Paths after Lucide (lucide.dev, ISC licence), inlined instead of an icon library.
+// The solid ones are filled and stroked in one colour, which rounds their corners.
 object MeghIcons {
   val ChevronLeft = line("ChevronLeft", "M15,18l-6,-6 6,-6")
   val ArrowBack = line("ArrowBack", "M12,19l-7,-7 7,-7", "M19,12H5")

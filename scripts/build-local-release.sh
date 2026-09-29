@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
-# Builds and signs a release APK locally, without needing CI or a push to main.
-# Usage: scripts/build-local-release.sh [output-path]
-#
-# Requires the release keystore + its passwords, kept OUTSIDE this repo (never commit
-# a keystore or its passwords to git) — see ~/Shuvo/Documents/iptv-android-tv-signing/.
-# Override their location with MEGHTV_KEYSTORE / MEGHTV_KEYSTORE_CREDS if you ever move them.
+# Builds and signs a release APK locally. Usage: scripts/build-local-release.sh [output-path]
+# The keystore and its passwords live outside the repo; MEGHTV_KEYSTORE / MEGHTV_KEYSTORE_CREDS override their paths.
 set -euo pipefail
 
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"

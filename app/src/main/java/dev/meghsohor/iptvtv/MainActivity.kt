@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
 
-    // The app is always dark, so system bar icons must be light regardless of the device theme.
+    // Always dark, so light system bar icons whatever the device theme.
     enableEdgeToEdge(
       statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
       navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT),
@@ -31,20 +31,19 @@ class MainActivity : ComponentActivity() {
     hideStatusBar()
     setContent {
       IPTVAndroidTVTheme {
-        // Not a Surface: its full-screen fill would repaint the navy the window background already draws.
+        // Not a Surface: its fill would repaint the navy the window background already draws.
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) { MainNavigation(repository) }
       }
     }
   }
 
-  // Re-applied on every focus gain: before Android 11 the hide is a view flag the system clears
-  // when you leave the app, and a dialog window (the refresh one) can bring the bar back too.
+  // Before Android 11 leaving the app clears the hide, and a dialog window can bring the bar back.
   override fun onWindowFocusChanged(hasFocus: Boolean) {
     super.onWindowFocusChanged(hasFocus)
     if (hasFocus) hideStatusBar()
   }
 
-  /** Status bar out of the way (a swipe brings it back briefly); the navigation bar stays so Back is always reachable. */
+  // The navigation bar stays, so Back is always reachable.
   private fun hideStatusBar() {
     WindowCompat.getInsetsController(window, window.decorView).apply {
       systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
