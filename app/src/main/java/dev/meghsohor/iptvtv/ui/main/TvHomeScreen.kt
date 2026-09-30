@@ -2,6 +2,7 @@ package dev.meghsohor.iptvtv.ui.main
 
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateContentSize
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.Image
@@ -183,9 +184,10 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
     }
   }
 
-  // Search freezes it for the whole Search view on touch, only while typing on TV: there nothing but the timer closes the panel.
+  // Search freezes it for the whole Search view on touch, only while typing on TV: there nothing but the timer closes the
+  // panel. On touch a focused in-list search box also freezes it, so the field can't auto-hide out from under typing.
   val refreshInProgress = state.refreshing || state.refreshMessage != null
-  val searching = if (touchMode) isSearch(state.panel) else searchFieldFocused
+  val searching = if (touchMode) isSearch(state.panel) || searchFieldFocused else searchFieldFocused
   // Nothing to watch: on touch unless something plays; on TV only before the first pick, since there
   // only the timer can move the panel off a paused picture or the error screen.
   val nothingToWatch = if (touchMode) !(hasPlayer && playbackActive) else !hasPlayer
@@ -341,6 +343,8 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
         entryFocusRequester = panelEntryFocusRequester,
         onActivity = { lastActivityAt[0] = SystemClock.uptimeMillis() },
         onSearchFieldFocusChanged = { searchFieldFocused = it },
+        // The in-list search's own Back handler stamps the shared de-dupe, so a doubled press can't also close the panel.
+        onBackHandled = { lastBackAt[0] = SystemClock.uptimeMillis() },
         onRefresh = { confirmRefresh = true },
         onChannelMenu = { index, channel -> menuChannel = IndexedValue(index, channel) },
         refocusAfterDelete = refocusAfterDelete,
@@ -460,6 +464,7 @@ private fun SidePanel(
   openedFrom: MutableMap<PanelState, Int>,
   onActivity: () -> Unit,
   onSearchFieldFocusChanged: (Boolean) -> Unit,
+  onBackHandled: () -> Unit,
   onRefresh: () -> Unit,
   onChannelMenu: (index: Int, ChannelEntity) -> Unit,
   refocusAfterDelete: IndexedValue<String>?,
@@ -554,8 +559,9 @@ private fun SidePanel(
         }
       }
 
-      // Empty until launch picks the opening view, or Categories flashes up first.
-      Box(Modifier.weight(1f).padding(start = RowGutter, end = RowGutter, top = 10.dp)) {
+      // Empty until launch picks the opening view, or Categories flashes up first. The gutter and top gap live on
+      // the lists inside, not here, so a drilled-in list's header can span the full panel width flush to the tabs.
+      Box(Modifier.weight(1f)) {
         if (state.startupPanelChosen) when (val panel = state.panel) {
           PanelState.CategoriesMenu ->
             CategoriesMenuContent(
@@ -570,6 +576,7 @@ private fun SidePanel(
           PanelState.CountriesMenu ->
             CountriesMenuContent(
               countries = state.countries,
+              touchMode = touchMode,
               listState = listState,
               focusIndex = focusIndex,
               focusRequester = contentFocusRequester,
@@ -595,6 +602,7 @@ private fun SidePanel(
               onToggleBookmark = viewModel::onToggleBookmark,
               onChannelMenu = onChannelMenu,
               onSearchFieldFocusChanged = onSearchFieldFocusChanged,
+              onBackHandled = onBackHandled,
             )
         }
       }
@@ -615,7 +623,12 @@ private val RowRadius = 12.dp
 private val PanelBackground = MeghSurface.copy(alpha = 0.97f)
 private val PinnedBand = lerp(MeghSurface, MeghBackground, 0.4f)
 private val RowFill = MeghSurfaceVariant.copy(alpha = 0.55f)
+// Phone: one step brighter than the pinned tabs, so the header reads as its own band. TV: the pinned-tab colour.
+private val HeaderBandMobile = lerp(PinnedBand, Color.White, 0.04f)
 private val LineColor = Color.White.copy(alpha = 0.09f)
+
+// A list shorter than this isn't worth an in-list search box.
+private const val InListSearchThreshold = 10
 
 private val DimmedRowFill = MeghSurfaceVariant.copy(alpha = 0.2f)
 private val DimmedLineColor = Color.White.copy(alpha = 0.04f)
@@ -676,7 +689,8 @@ private fun Modifier.scrollIndicator(state: LazyListState): Modifier = drawWithC
   val viewport = (info.viewportEndOffset - info.viewportStartOffset).toFloat()
   val content = itemSize * info.totalItemsCount
   val scrolled = visible.first().index * itemSize - visible.first().offset
-  val thumb = (viewport * viewport / content).coerceIn(28.dp.toPx(), viewport)
+  // A search list squeezed by the keyboard can be shorter than the min thumb: cap the min at the viewport so the range never inverts.
+  val thumb = (viewport * viewport / content).coerceIn(28.dp.toPx().coerceAtMost(viewport), viewport)
   val top = (scrolled / (content - viewport)).coerceIn(0f, 1f) * (viewport - thumb)
   val width = 3.dp.toPx()
   drawRoundRect(
@@ -755,7 +769,7 @@ private fun CategoriesMenuContent(
   onCategory: (index: Int, CategoryEntity) -> Unit,
 ) {
   fun rowModifier(index: Int) = if (index == focusIndex) Modifier.focusRequester(focusRequester) else Modifier
-  LazyColumn(Modifier.scrollIndicator(listState), state = listState, contentPadding = ListPadding, verticalArrangement = Arrangement.spacedBy(RowGap)) {
+  LazyColumn(Modifier.padding(horizontal = RowGutter).scrollIndicator(listState), state = listState, contentPadding = ListPadding, verticalArrangement = Arrangement.spacedBy(RowGap)) {
     item { PlainRow("All Channels", onClick = onAllChannels, modifier = rowModifier(0)) }
     item { PlainRow("Countries", onClick = onCountries, modifier = rowModifier(1)) }
     itemsIndexed(categories, key = { _, it -> it.id }) { i, category ->
@@ -767,6 +781,7 @@ private fun CategoriesMenuContent(
 @Composable
 private fun CountriesMenuContent(
   countries: List<CountryEntity>,
+  touchMode: Boolean,
   listState: LazyListState,
   focusIndex: Int,
   focusRequester: FocusRequester,
@@ -774,8 +789,8 @@ private fun CountriesMenuContent(
   onCountry: (index: Int, CountryEntity) -> Unit,
 ) {
   Column {
-    BackHeader("Countries", onBack = onBack)
-    LazyColumn(Modifier.scrollIndicator(listState), state = listState, contentPadding = ListPadding, verticalArrangement = Arrangement.spacedBy(RowGap)) {
+    ListHeader("Countries", onBack = onBack, bandColor = if (touchMode) HeaderBandMobile else PinnedBand)
+    LazyColumn(Modifier.padding(horizontal = RowGutter).scrollIndicator(listState), state = listState, contentPadding = ListPadding, verticalArrangement = Arrangement.spacedBy(RowGap)) {
       itemsIndexed(countries, key = { _, it -> it.code }) { i, country ->
         PlainRow(
           "${country.flag}  ${country.name}",
@@ -807,41 +822,80 @@ private fun ChannelListContent(
   onToggleBookmark: (ChannelEntity) -> Unit,
   onChannelMenu: (index: Int, ChannelEntity) -> Unit,
   onSearchFieldFocusChanged: (Boolean) -> Unit,
+  onBackHandled: () -> Unit,
 ) {
   val flagByCountry = remember(countries) { countries.associate { it.code to it.flag } }
   val isSearch = source == ChannelListSource.Search
+  val hasHeader = !isSearch && source != ChannelListSource.Favourites
   val keyboard = LocalSoftwareKeyboardController.current
 
+  // In-list search, scoped to the current list, offered once it is long enough to be worth filtering.
+  var searchExpanded by remember(source) { mutableStateOf(false) }
+  var localQuery by remember(source) { mutableStateOf("") }
+  // Only scoped lists get in-list search; All Channels is already covered by the Search tab.
+  val searchable = (source is ChannelListSource.Category || source is ChannelListSource.Country) && (channels?.size ?: 0) > InListSearchThreshold
+  // A refresh can shrink a list below the threshold: don't leave the field stuck open.
+  LaunchedEffect(searchable) { if (!searchable) { searchExpanded = false; localQuery = "" } }
+  // Collapsing disposes the field: reset the panel's focus flag here instead of relying on the gone field to report it.
+  LaunchedEffect(searchExpanded) { if (!isSearch && !searchExpanded) onSearchFieldFocusChanged(false) }
+  // onBackHandled stamps the shared Back de-dupe, so a doubled press collapses the search without also closing the panel.
+  BackHandler(enabled = searchExpanded) { onBackHandled(); searchExpanded = false; localQuery = "" }
+
+  val shown =
+    remember(channels, searchExpanded, localQuery) {
+      if (searchExpanded && localQuery.isNotBlank()) channels?.filter { it.displayName.contains(localQuery, ignoreCase = true) }
+      else channels
+    }
+
   Column {
+    // A drilled-in list's own header sits flush under the tabs; a header-less list (Favourites, Search) needs the gap itself.
+    if (!hasHeader) Spacer(Modifier.height(10.dp))
     // Favourites and Search are named by their highlighted tab; a heading would repeat it.
-    if (!isSearch && source != ChannelListSource.Favourites) BackHeader(source.headerName, count = channels?.size, onBack = onBack)
-    if (isSearch) {
-      SearchField(
-        value = searchQuery,
-        onValueChange = onSearchQueryChange,
-        autoFocus = touchMode,
-        onFocusChanged = onSearchFieldFocusChanged,
+    if (hasHeader) {
+      ListHeader(
+        title = source.headerName,
+        count = shown?.size,
+        onBack = onBack,
+        bandColor = if (touchMode) HeaderBandMobile else PinnedBand,
+        searchable = searchable,
+        searchExpanded = searchExpanded,
+        onToggleSearch = { searchExpanded = !searchExpanded; if (!searchExpanded) localQuery = "" },
+        searchQuery = localQuery,
+        onSearchQueryChange = { localQuery = it },
+        onSearchFieldFocusChanged = onSearchFieldFocusChanged,
       )
+    }
+    if (isSearch) {
+      Box(Modifier.padding(horizontal = RowGutter)) {
+        SearchField(
+          value = searchQuery,
+          onValueChange = onSearchQueryChange,
+          autoFocus = touchMode,
+          onFocusChanged = onSearchFieldFocusChanged,
+        )
+      }
     }
     if (channels == null) return@Column // still loading
     if ((isSearch || source == ChannelListSource.Favourites) && channels.isNotEmpty()) ChannelCount(channels.size)
-    if (channels.isEmpty()) {
+    val rows = shown.orEmpty()
+    if (rows.isEmpty()) {
       EmptyListMessage(
         when {
           source == ChannelListSource.Favourites -> "No favourites yet.\nUse the star next to any channel to add it here."
           isSearch && searchQuery.isBlank() -> "Type a channel name to search."
           isSearch -> "No channels match \"$searchQuery\"."
+          searchExpanded && localQuery.isNotBlank() -> "No channels match \"$localQuery\"."
           else -> "No channels here."
         }
       )
     }
     LazyColumn(
-      Modifier.scrollIndicator(listState),
+      Modifier.padding(horizontal = RowGutter).scrollIndicator(listState),
       state = listState,
       contentPadding = ListPadding,
       verticalArrangement = Arrangement.spacedBy(RowGap),
     ) {
-      itemsIndexed(channels, key = { _, it -> it.id }) { i, channel ->
+      itemsIndexed(rows, key = { _, it -> it.id }) { i, channel ->
         ChannelRow(
           modifier = if (i == focusIndex) Modifier.focusRequester(focusRequester) else Modifier,
           channel = channel,
@@ -866,30 +920,78 @@ private fun ChannelListContent(
   }
 }
 
+/**
+ * A drilled-in list's header: a flat band with a top and bottom hairline, so it reads as fixed and separate
+ * from the pinned tabs above and the list below rather than as another row. Clicking it goes back; when the
+ * list is long enough, the trailing icon expands an in-list search scoped to this list (✕ collapses it).
+ */
 @Composable
-private fun BackHeader(title: String, onBack: () -> Unit, count: Int? = null) {
-  val interaction = remember { MutableInteractionSource() }
-  Row(
+private fun ListHeader(
+  title: String,
+  onBack: () -> Unit,
+  count: Int? = null,
+  bandColor: Color = PinnedBand,
+  searchable: Boolean = false,
+  searchExpanded: Boolean = false,
+  onToggleSearch: () -> Unit = {},
+  searchQuery: String = "",
+  onSearchQueryChange: (String) -> Unit = {},
+  onSearchFieldFocusChanged: (Boolean) -> Unit = {},
+) {
+  val backInteraction = remember { MutableInteractionSource() }
+  val iconInteraction = remember { MutableInteractionSource() }
+  Column(
     Modifier.padding(bottom = RowGap)
       .fillMaxWidth()
-      .panelRow(interaction, onClick = onBack)
-      .heightIn(min = 48.dp)
-      .padding(horizontal = 14.dp),
-    verticalAlignment = Alignment.CenterVertically,
+      .animateContentSize()
+      .drawBehind {
+        // Flat fill (per-device) with only a bottom hairline, so it sits flush under the tabs.
+        val hair = 1.dp.toPx()
+        drawRect(bandColor)
+        drawRect(LineColor, topLeft = Offset(0f, size.height - hair), size = size.copy(height = hair))
+      },
   ) {
-    Icon(MeghIcons.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
-    Spacer(Modifier.width(12.dp))
-    Text(
-      title,
-      color = MaterialTheme.colorScheme.onSurface,
-      style = MaterialTheme.typography.titleMedium,
-      maxLines = 1,
-      overflow = TextOverflow.Ellipsis,
-      modifier = Modifier.weight(1f, fill = false),
-    )
-    // Separate Text, so a long name ellipsizes without cutting off the count.
-    if (count != null) {
-      Text("  ($count)", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+    Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+      Row(
+        Modifier.weight(1f)
+          .fillMaxHeight()
+          .panelRow(backInteraction, block = false, onClick = onBack)
+          .padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Icon(MeghIcons.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.width(12.dp))
+        Text(
+          title,
+          color = MaterialTheme.colorScheme.onSurface,
+          style = MaterialTheme.typography.titleMedium,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f, fill = false),
+        )
+        // Separate Text, so a long name ellipsizes without cutting off the count.
+        if (count != null) {
+          Text("  ($count)", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+        }
+      }
+      if (searchable) {
+        Box(
+          Modifier.fillMaxHeight().width(52.dp).panelRow(iconInteraction, block = false, onClick = onToggleSearch),
+          contentAlignment = Alignment.Center,
+        ) {
+          Icon(
+            if (searchExpanded) MeghIcons.Close else MeghIcons.Search,
+            contentDescription = if (searchExpanded) "Close search" else "Search this list",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp),
+          )
+        }
+      }
+    }
+    if (searchExpanded) {
+      Box(Modifier.padding(start = 10.dp, end = 10.dp, top = 4.dp)) {
+        SearchField(value = searchQuery, onValueChange = onSearchQueryChange, autoFocus = true, onFocusChanged = onSearchFieldFocusChanged)
+      }
     }
   }
 }
@@ -900,7 +1002,7 @@ private fun ChannelCount(count: Int) {
     if (count == 1) "1 channel" else "$count channels",
     color = MaterialTheme.colorScheme.onSurfaceVariant,
     style = MaterialTheme.typography.labelMedium,
-    modifier = Modifier.padding(start = 6.dp, bottom = RowGap),
+    modifier = Modifier.padding(start = RowGutter + 6.dp, bottom = RowGap),
   )
 }
 
@@ -1055,7 +1157,7 @@ private fun ChannelRow(
   }
 }
 
-private val ListPadding = PaddingValues(bottom = 12.dp)
+private val ListPadding = PaddingValues(top = 10.dp, bottom = 12.dp)
 
 private const val RefreshResultAutoCloseMs = 4000L
 
