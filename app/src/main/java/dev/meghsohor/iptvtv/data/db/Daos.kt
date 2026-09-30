@@ -68,7 +68,7 @@ interface ChannelDao {
   fun observeSearch(query: String): Flow<List<ChannelEntity>>
 
   @Query(
-    "SELECT channels.* FROM channels INNER JOIN bookmarks ON channels.id = bookmarks.channelId WHERE channels.id NOT IN (SELECT channelId FROM deleted_channels) ORDER BY channels.displayName COLLATE NOCASE, channels.sortOrder"
+    "SELECT channels.* FROM channels INNER JOIN bookmarks ON channels.id = bookmarks.channelId WHERE channels.id NOT IN (SELECT channelId FROM deleted_channels) ORDER BY bookmarks.addedAt DESC"
   )
   fun observeBookmarked(): Flow<List<ChannelEntity>>
 
