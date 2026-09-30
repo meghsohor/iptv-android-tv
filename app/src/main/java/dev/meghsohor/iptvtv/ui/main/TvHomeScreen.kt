@@ -2,7 +2,13 @@ package dev.meghsohor.iptvtv.ui.main
 
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.Image
@@ -123,6 +129,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 private val PanelWidth = 360.dp
 private val PanelHandleWidth = 44.dp
+private const val PanelAnimMs = 220
 private const val PanelAutoHideDelayMs = 7000L
 private const val SameBackPressWindowMs = 200L
 private val PanelNavigationKeys =
@@ -335,7 +342,13 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
       )
     }
 
-    if (panelOpen) {
+    // Slides in from the edge it lives on. One placement offset, so a low-end TV keeps up.
+    AnimatedVisibility(
+      visible = panelOpen,
+      modifier = Modifier.align(Alignment.CenterEnd),
+      enter = slideInHorizontally(tween(PanelAnimMs)) { it } + fadeIn(tween(PanelAnimMs)),
+      exit = slideOutHorizontally(tween(PanelAnimMs)) { it } + fadeOut(tween(PanelAnimMs)),
+    ) {
       SidePanel(
         state = state,
         viewModel = viewModel,
@@ -351,10 +364,16 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
         onRefocused = { refocusAfterDelete = null },
         listState = listState,
         openedFrom = openedFrom,
-        modifier = Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(PanelWidth),
+        modifier = Modifier.fillMaxHeight().width(PanelWidth),
       )
-    } else if (touchMode) {
-      PanelHandle(onClick = ::openPanel, modifier = Modifier.align(Alignment.CenterEnd))
+    }
+    AnimatedVisibility(
+      visible = touchMode && !panelOpen,
+      modifier = Modifier.align(Alignment.CenterEnd),
+      enter = fadeIn(tween(PanelAnimMs)),
+      exit = fadeOut(tween(PanelAnimMs)),
+    ) {
+      PanelHandle(onClick = ::openPanel)
     }
 
     if (confirmRefresh) {
@@ -439,8 +458,8 @@ private fun PanelHandle(onClick: () -> Unit, modifier: Modifier = Modifier) {
   Box(
     modifier
       .size(width = PanelHandleWidth, height = 96.dp)
-      // Lighter than the navy letterbox it sits on.
-      .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
+      // Opaque, so the video doesn't show through; lighter than the navy letterbox it sits on.
+      .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp))
       .clickable(interactionSource = interaction, indication = null, onClick = onClick)
       .semantics { contentDescription = "Open menu" },
     contentAlignment = Alignment.Center,
@@ -576,7 +595,6 @@ private fun SidePanel(
           PanelState.CountriesMenu ->
             CountriesMenuContent(
               countries = state.countries,
-              touchMode = touchMode,
               listState = listState,
               focusIndex = focusIndex,
               focusRequester = contentFocusRequester,
@@ -620,11 +638,14 @@ private fun isCategories(panel: PanelState) = !isSearch(panel) && !isFavourites(
 private val RowGutter = 10.dp
 private val RowGap = 6.dp
 private val RowRadius = 12.dp
-private val PanelBackground = MeghSurface.copy(alpha = 0.97f)
+// Three nested layers told apart by tone alone, each a step lighter than the one around it:
+// the pinned tabs (outermost), a drilled-in list's header, then the list itself.
 private val PinnedBand = lerp(MeghSurface, MeghBackground, 0.4f)
-private val RowFill = MeghSurfaceVariant.copy(alpha = 0.55f)
-// Phone: one step brighter than the pinned tabs, so the header reads as its own band. TV: the pinned-tab colour.
-private val HeaderBandMobile = lerp(PinnedBand, Color.White, 0.04f)
+private val HeaderBand = MeghSurface
+private val ListTone = lerp(MeghSurface, MeghSurfaceVariant, 0.55f)
+private val PanelBackground = ListTone.copy(alpha = 0.97f)
+// Opaque and a shade darker than the list layer, so rows read as set into it.
+private val RowFill = lerp(ListTone, MeghBackground, 0.15f)
 private val LineColor = Color.White.copy(alpha = 0.09f)
 
 // A list shorter than this isn't worth an in-list search box.
@@ -769,7 +790,7 @@ private fun CategoriesMenuContent(
   onCategory: (index: Int, CategoryEntity) -> Unit,
 ) {
   fun rowModifier(index: Int) = if (index == focusIndex) Modifier.focusRequester(focusRequester) else Modifier
-  LazyColumn(Modifier.padding(horizontal = RowGutter).scrollIndicator(listState), state = listState, contentPadding = ListPadding, verticalArrangement = Arrangement.spacedBy(RowGap)) {
+  LazyColumn(Modifier.padding(horizontal = RowGutter).scrollIndicator(listState), state = listState, contentPadding = MenuPadding, verticalArrangement = Arrangement.spacedBy(RowGap)) {
     item { PlainRow("All Channels", onClick = onAllChannels, modifier = rowModifier(0)) }
     item { PlainRow("Countries", onClick = onCountries, modifier = rowModifier(1)) }
     itemsIndexed(categories, key = { _, it -> it.id }) { i, category ->
@@ -781,7 +802,6 @@ private fun CategoriesMenuContent(
 @Composable
 private fun CountriesMenuContent(
   countries: List<CountryEntity>,
-  touchMode: Boolean,
   listState: LazyListState,
   focusIndex: Int,
   focusRequester: FocusRequester,
@@ -789,7 +809,7 @@ private fun CountriesMenuContent(
   onCountry: (index: Int, CountryEntity) -> Unit,
 ) {
   Column {
-    ListHeader("Countries", onBack = onBack, bandColor = if (touchMode) HeaderBandMobile else PinnedBand)
+    ListHeader("Countries", onBack = onBack)
     LazyColumn(Modifier.padding(horizontal = RowGutter).scrollIndicator(listState), state = listState, contentPadding = ListPadding, verticalArrangement = Arrangement.spacedBy(RowGap)) {
       itemsIndexed(countries, key = { _, it -> it.code }) { i, country ->
         PlainRow(
@@ -856,7 +876,6 @@ private fun ChannelListContent(
         title = source.headerName,
         count = shown?.size,
         onBack = onBack,
-        bandColor = if (touchMode) HeaderBandMobile else PinnedBand,
         searchable = searchable,
         searchExpanded = searchExpanded,
         onToggleSearch = { searchExpanded = !searchExpanded; if (!searchExpanded) localQuery = "" },
@@ -930,7 +949,6 @@ private fun ListHeader(
   title: String,
   onBack: () -> Unit,
   count: Int? = null,
-  bandColor: Color = PinnedBand,
   searchable: Boolean = false,
   searchExpanded: Boolean = false,
   onToggleSearch: () -> Unit = {},
@@ -945,33 +963,40 @@ private fun ListHeader(
       .fillMaxWidth()
       .animateContentSize()
       .drawBehind {
-        // Flat fill (per-device) with only a bottom hairline, so it sits flush under the tabs.
+        // Flat middle-layer fill with only a bottom hairline, so it sits flush under the tabs.
         val hair = 1.dp.toPx()
-        drawRect(bandColor)
+        drawRect(HeaderBand)
         drawRect(LineColor, topLeft = Offset(0f, size.height - hair), size = size.copy(height = hair))
       },
   ) {
+    // One row, always: the field replaces the title while searching, so it never sinks a level under the keyboard.
     Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
-      Row(
-        Modifier.weight(1f)
-          .fillMaxHeight()
-          .panelRow(backInteraction, block = false, onClick = onBack)
-          .padding(horizontal = 14.dp),
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Icon(MeghIcons.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
-        Spacer(Modifier.width(12.dp))
-        Text(
-          title,
-          color = MaterialTheme.colorScheme.onSurface,
-          style = MaterialTheme.typography.titleMedium,
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis,
-          modifier = Modifier.weight(1f, fill = false),
-        )
-        // Separate Text, so a long name ellipsizes without cutting off the count.
-        if (count != null) {
-          Text("  ($count)", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+      if (searchExpanded) {
+        Box(Modifier.weight(1f).padding(start = 10.dp)) {
+          SearchField(value = searchQuery, onValueChange = onSearchQueryChange, autoFocus = true, onFocusChanged = onSearchFieldFocusChanged)
+        }
+      } else {
+        Row(
+          Modifier.weight(1f)
+            .fillMaxHeight()
+            .panelRow(backInteraction, block = false, onClick = onBack)
+            .padding(horizontal = 14.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Icon(MeghIcons.ArrowBack, contentDescription = "Back", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+          Spacer(Modifier.width(12.dp))
+          Text(
+            title,
+            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false),
+          )
+          // Separate Text, so a long name ellipsizes without cutting off the count.
+          if (count != null) {
+            Text("  ($count)", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.titleMedium, maxLines = 1)
+          }
         }
       }
       if (searchable) {
@@ -986,11 +1011,6 @@ private fun ListHeader(
             modifier = Modifier.size(20.dp),
           )
         }
-      }
-    }
-    if (searchExpanded) {
-      Box(Modifier.padding(start = 10.dp, end = 10.dp, top = 4.dp)) {
-        SearchField(value = searchQuery, onValueChange = onSearchQueryChange, autoFocus = true, onFocusChanged = onSearchFieldFocusChanged)
       }
     }
   }
@@ -1033,7 +1053,7 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, autoFocu
       .padding(bottom = RowGap)
       .background(MaterialTheme.colorScheme.surfaceVariant, shape)
       .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else LineColor, shape)
-      .padding(14.dp, 12.dp)
+      .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp)
       .onFocusChanged { // the field inside is the focusable one
         focused = it.hasFocus
         onFocusChanged(it.hasFocus)
@@ -1047,18 +1067,43 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, autoFocu
         }
       }
   ) {
-    if (value.isEmpty()) Text("Search channels…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-    BasicTextField(
-      value = value,
-      onValueChange = onValueChange,
-      singleLine = true,
-      textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
-      cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-      keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-      keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
-      // Full width, so a tap anywhere in the box lands on the field.
-      modifier = Modifier.fillMaxWidth().focusRequester(fieldFocusRequester),
-    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+      Box(Modifier.weight(1f)) {
+        if (value.isEmpty()) Text("Search channels…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+        BasicTextField(
+          value = value,
+          onValueChange = onValueChange,
+          singleLine = true,
+          textStyle = MaterialTheme.typography.bodyMedium.copy(color = MaterialTheme.colorScheme.onSurface),
+          cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+          keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+          keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
+          // Full width, so a tap anywhere in the box lands on the field.
+          modifier = Modifier.fillMaxWidth().focusRequester(fieldFocusRequester),
+        )
+      }
+      // Slot kept when empty, so the field doesn't change height on the first letter. 28dp keeps the field at its
+      // old 44dp: on a landscape phone with the keyboard up there's no height to spare.
+      Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+        if (value.isNotEmpty()) {
+          val clearInteraction = remember { MutableInteractionSource() }
+          val clearFocused by clearInteraction.collectIsFocusedAsState()
+          val clearPressed by clearInteraction.collectIsPressedAsState()
+          Icon(
+            MeghIcons.ClearCircle,
+            contentDescription = "Clear search",
+            tint = if (clearFocused || clearPressed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier =
+              Modifier.fillMaxSize()
+                .clickable(interactionSource = clearInteraction, indication = null) {
+                  onValueChange("")
+                  fieldFocusRequester.requestFocus() // keep the keyboard up for the next query
+                }
+                .padding(4.dp),
+          )
+        }
+      }
+    }
   }
 }
 
@@ -1157,7 +1202,9 @@ private fun ChannelRow(
   }
 }
 
-private val ListPadding = PaddingValues(top = 10.dp, bottom = 12.dp)
+// A header gives its own list the top gap (equal to the inter-row gap); only the header-less top menu needs one here.
+private val ListPadding = PaddingValues(bottom = 12.dp)
+private val MenuPadding = PaddingValues(top = 10.dp, bottom = 12.dp)
 
 private const val RefreshResultAutoCloseMs = 4000L
 

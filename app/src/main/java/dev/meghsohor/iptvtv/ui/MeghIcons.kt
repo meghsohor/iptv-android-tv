@@ -23,6 +23,7 @@ object MeghIcons {
     )
   val Search = line("Search", "M11,3a8,8 0,1 0,0,16a8,8 0,1 0,0,-16z", "M21,21l-4.3,-4.3")
   val Close = line("Close", "M6,6l12,12", "M6,18l12,-12")
+  val ClearCircle = line("ClearCircle", "M12,3a9,9 0,1 0,0,18a9,9 0,1 0,0,-18z", "M15,9l-6,6", "M9,9l6,6")
   val Grid = line("Grid", roundRect(3f, 3f), roundRect(14f, 3f), roundRect(14f, 14f), roundRect(3f, 14f))
   val Star = line("Star", StarPath)
   val StarFilled = solid("StarFilled", StarPath)
