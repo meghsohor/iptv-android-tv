@@ -79,8 +79,11 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
     val countryCsv = client.fetchCountriesCsv()
     val channelCsv = client.fetchChannelsCsv()
 
-    val countryCodes = client.fetchPlaylistCountryCodes()
-    val playlists = client.fetchAllPlaylists(countryCodes)
+    // Per-country files keep each channel's mirror URLs, but need the GitHub API to list them, which is
+    // rate-limited per IP (403 on shared mobile networks). Fall back to the combined playlist, which needs no API.
+    val playlists =
+      runCatching { client.fetchAllPlaylists(client.fetchPlaylistCountryCodes()).ifEmpty { error("no playlists") } }
+        .getOrElse { listOf("combined" to client.fetchCombinedPlaylist()) }
     check(playlists.isNotEmpty()) { "Refresh failed: could not reach iptv-org (no playlists fetched)" }
 
     val existingSelections = db.channelDao().allSelectedSources().associate { it.id to it.selectedSourceUrl }
