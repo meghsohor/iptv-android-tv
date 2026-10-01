@@ -2,11 +2,12 @@
 
 Operational notes for any AI agent working in this repo — the stuff that isn't in the README because it's about environment/tooling quirks and hard-won gotchas, not the app itself. The README only lists the main features; the detailed navigation and playback behaviour is documented in comments in `TvHomeScreen.kt`, `VideoPlayer.kt` and `TvHomeViewModel.kt`.
 
-## Current status (as of 2026-09-28)
+## Current status (as of 2026-10-01)
 
 - The app runs on both Android TV (D-pad) and Android phones (touch, landscape) — verified on the `tv_1080p` and `medium_phone` emulators against real iptv-org data.
-- PRs #1–#5 are merged; releases up to `v1.4` are published.
-- Branch `category-search-and-refresh-fallback` bumps to `1.5`/versionCode 6, so merging it publishes `v1.5`: refresh falls back to iptv-org's combined `index.m3u` when the GitHub API rate-limits the streams listing (fixes a 403 first-time mobile users hit); a flat full-width drilled-in list header, flush under the tabs with a bottom hairline only; an in-list search scoped to a Category or Country list of more than 10 channels (the field takes the header row so it stays above a landscape phone's keyboard, with a clear button; ✕ or Back closes it); a panel that slides in and out, with an opaque arrow tab; three nested panel layers told apart by tone (`PinnedBand` → `HeaderBand` → `PanelBackground`, each a step lighter, rows opaque and a shade darker than the list, same on phone and TV); favourites ordered newest first; and a fix for a scroll-indicator crash when the search viewport is shorter than the min thumb.
+- PRs #1–#6 are merged; releases up to `v1.5` are published.
+- The GitHub repo is `meghsohor/meghtv` (renamed from `iptv-android-tv`; old URLs redirect). Release APKs are `MeghTV-v<version>.apk`. The application ID stays `dev.meghsohor.iptvtv`: changing it would make Android treat the app as a new one, so existing installs wouldn't upgrade and would keep their favourites in the old app.
+- `v1.5` (versionCode 6): refresh falls back to iptv-org's combined `index.m3u` when the GitHub API rate-limits the streams listing (fixes a 403 first-time mobile users hit); a flat full-width drilled-in list header, flush under the tabs with a bottom hairline only; an in-list search scoped to a Category or Country list of more than 10 channels (the field takes the header row so it stays above a landscape phone's keyboard, with a clear button; ✕ or Back closes it); a panel that slides in and out, with an opaque arrow tab; three nested panel layers told apart by tone (`PinnedBand` → `HeaderBand` → `PanelBackground`, each a step lighter, rows opaque and a shade darker than the list, same on phone and TV); favourites ordered newest first; and a fix for a scroll-indicator crash when the search viewport is shorter than the min thumb.
 - The database is at version 2 (`failed_channels` and `deleted_channels` tables). `IptvDatabase` has a hand-written 1→2 migration; any further schema change needs its own migration, or upgrading users lose their favourites.
 - Next: a tests PR (TV key routing, ViewModel startup and channel zap, DAO ordering and pruning).
 
