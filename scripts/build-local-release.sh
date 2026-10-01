@@ -5,9 +5,9 @@ set -euo pipefail
 
 ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 JAVA_BIN="/opt/homebrew/opt/openjdk@17/bin"
-KEYSTORE="${MEGHTV_KEYSTORE:-$HOME/Shuvo/Documents/iptv-android-tv-signing/release.keystore}"
-CREDS_FILE="${MEGHTV_KEYSTORE_CREDS:-$HOME/Shuvo/Documents/iptv-android-tv-signing/passwords.txt}"
-KEY_ALIAS="iptvtv-release"
+KEYSTORE="${MEGHTV_KEYSTORE:-$HOME/Shuvo/Documents/meghtv-signing/release.keystore}"
+CREDS_FILE="${MEGHTV_KEYSTORE_CREDS:-$HOME/Shuvo/Documents/meghtv-signing/passwords.txt}"
+KEY_ALIAS="meghtv-release"
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
