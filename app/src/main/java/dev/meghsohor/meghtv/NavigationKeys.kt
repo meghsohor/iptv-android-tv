@@ -1,4 +1,4 @@
-package dev.meghsohor.iptvtv
+package dev.meghsohor.meghtv
 
 import androidx.navigation3.runtime.NavKey
 import kotlinx.serialization.Serializable

@@ -1,18 +1,18 @@
-package dev.meghsohor.iptvtv.data
+package dev.meghsohor.meghtv.data
 
 import androidx.room.withTransaction
-import dev.meghsohor.iptvtv.data.db.BookmarkEntity
-import dev.meghsohor.iptvtv.data.db.CategoryEntity
-import dev.meghsohor.iptvtv.data.db.ChannelEntity
-import dev.meghsohor.iptvtv.data.db.CountryEntity
-import dev.meghsohor.iptvtv.data.db.DeletedChannelEntity
-import dev.meghsohor.iptvtv.data.db.FailedChannelEntity
-import dev.meghsohor.iptvtv.data.db.IptvDatabase
-import dev.meghsohor.iptvtv.data.db.StreamUrlEntity
-import dev.meghsohor.iptvtv.data.remote.IptvOrgClient
-import dev.meghsohor.iptvtv.data.remote.M3uEntry
-import dev.meghsohor.iptvtv.data.remote.parseCsv
-import dev.meghsohor.iptvtv.data.remote.parseM3u
+import dev.meghsohor.meghtv.data.db.BookmarkEntity
+import dev.meghsohor.meghtv.data.db.CategoryEntity
+import dev.meghsohor.meghtv.data.db.ChannelEntity
+import dev.meghsohor.meghtv.data.db.CountryEntity
+import dev.meghsohor.meghtv.data.db.DeletedChannelEntity
+import dev.meghsohor.meghtv.data.db.FailedChannelEntity
+import dev.meghsohor.meghtv.data.db.MeghTVDatabase
+import dev.meghsohor.meghtv.data.db.StreamUrlEntity
+import dev.meghsohor.meghtv.data.remote.IptvOrgClient
+import dev.meghsohor.meghtv.data.remote.M3uEntry
+import dev.meghsohor.meghtv.data.remote.parseCsv
+import dev.meghsohor.meghtv.data.remote.parseM3u
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -22,7 +22,7 @@ data class RefreshResult(val added: Int, val removed: Int, val bookmarksRemoved:
 // Under SQLite's default limit of 999 bound parameters per statement.
 private const val SqliteMaxBindVariables = 900
 
-class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgClient = IptvOrgClient()) {
+class MeghTVRepository(private val db: MeghTVDatabase, private val client: IptvOrgClient = IptvOrgClient()) {
 
   val categories: Flow<List<CategoryEntity>> = db.categoryDao().observeAll()
   val countries: Flow<List<CountryEntity>> = db.countryDao().observeAll()

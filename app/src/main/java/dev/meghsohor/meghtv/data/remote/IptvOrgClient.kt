@@ -1,4 +1,4 @@
-package dev.meghsohor.iptvtv.data.remote
+package dev.meghsohor.meghtv.data.remote
 
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers

@@ -1,4 +1,4 @@
-package dev.meghsohor.iptvtv.ui.main
+package dev.meghsohor.meghtv.ui.main
 
 sealed interface PanelState {
   data object CategoriesMenu : PanelState

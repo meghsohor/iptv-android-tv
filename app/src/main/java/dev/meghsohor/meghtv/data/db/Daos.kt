@@ -1,4 +1,4 @@
-package dev.meghsohor.iptvtv.data.db
+package dev.meghsohor.meghtv.data.db
 
 import androidx.room.Dao
 import androidx.room.Insert

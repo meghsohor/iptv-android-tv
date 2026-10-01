@@ -1,11 +1,11 @@
-package dev.meghsohor.iptvtv.theme
+package dev.meghsohor.meghtv.theme
 
 import androidx.compose.material3.Typography
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import dev.meghsohor.iptvtv.R
+import dev.meghsohor.meghtv.R
 
 // Outfit (SIL Open Font License). Static weights: the variable font's weight axis needs API 26, minSdk is 23.
 private val Outfit =

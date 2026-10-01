@@ -1,4 +1,4 @@
-package dev.meghsohor.iptvtv.data.remote
+package dev.meghsohor.meghtv.data.remote
 
 /** RFC4180: quoted fields can hold commas and newlines, and "" is an escaped quote. */
 internal fun parseCsv(text: String): List<Map<String, String>> {

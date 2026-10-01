@@ -21,7 +21,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:windowSoftInputMode="adjustResize"
-        android:theme="@style/Theme.IPTVAndroidTV">
+        android:theme="@style/Theme.MeghTV">
         <activity
             android:name=".MainActivity"
             android:exported="true"

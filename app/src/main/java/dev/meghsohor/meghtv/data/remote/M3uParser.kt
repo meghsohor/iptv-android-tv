@@ -1,4 +1,4 @@
-package dev.meghsohor.iptvtv.data.remote
+package dev.meghsohor.meghtv.data.remote
 
 /** [tvgId] is "channelId@feedId". */
 internal data class M3uEntry(val tvgId: String, val title: String, val url: String)
