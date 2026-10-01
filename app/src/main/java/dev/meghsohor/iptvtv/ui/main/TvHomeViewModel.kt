@@ -146,11 +146,12 @@ class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
   /** Where a deleted playing channel sat in [currentPlaybackList], so Channel Up/Down carry on from there. */
   private var zapGap: Int? = null
 
-  fun onSelectChannel(channelId: String) {
+  /** [shownIds] is the list as displayed, so Channel Up/Down stay inside an in-list search's results. */
+  fun onSelectChannel(channelId: String, shownIds: List<String>) {
     if (channelId in deletedIds) return
     zapGap = null
     currentChannelId.value = channelId
-    currentPlaybackList.value = uiState.value.listChannels.orEmpty().map { it.id }.filterNot { it in deletedIds }
+    currentPlaybackList.value = shownIds.filterNot { it in deletedIds }
   }
 
   fun onChannelUp() = stepChannel(1)

@@ -1,9 +1,11 @@
 package dev.meghsohor.iptvtv.data.remote
 
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
@@ -13,15 +15,31 @@ import okhttp3.Request
 private const val DATABASE_RAW = "https://raw.githubusercontent.com/iptv-org/database/master/data"
 private const val IPTV_RAW = "https://raw.githubusercontent.com/iptv-org/iptv/master/streams"
 private const val IPTV_STREAMS_LISTING = "https://api.github.com/repos/iptv-org/iptv/contents/streams"
+// Compiled master playlist on GitHub Pages: every stream in one file, no API rate limit. The refresh fallback.
+private const val IPTV_COMBINED = "https://iptv-org.github.io/iptv/index.m3u"
+
+private const val USER_AGENT = "MeghTV (Android; https://github.com/meghsohor/iptv-android-tv)"
+private val RETRYABLE_CODES = setOf(429, 500, 502, 503, 504)
 
 class IptvOrgClient(private val http: OkHttpClient = OkHttpClient()) {
 
-  private suspend fun getText(url: String): String =
+  // Retries transient failures (429/5xx/network) with backoff; a 403/404 throws at once so callers can fall back.
+  private suspend fun getText(url: String, attempts: Int = 3): String =
     withContext(Dispatchers.IO) {
-      http.newCall(Request.Builder().url(url).build()).execute().use { response ->
-        if (!response.isSuccessful) error("GET $url failed: HTTP ${response.code}")
-        response.body?.string() ?: error("GET $url returned an empty body")
+      var lastError: Exception? = null
+      repeat(attempts) { attempt ->
+        try {
+          http.newCall(Request.Builder().url(url).header("User-Agent", USER_AGENT).build()).execute().use { response ->
+            if (response.isSuccessful) return@withContext response.body?.string() ?: error("GET $url returned an empty body")
+            if (response.code !in RETRYABLE_CODES) error("GET $url failed: HTTP ${response.code}")
+            lastError = IOException("GET $url failed: HTTP ${response.code}")
+          }
+        } catch (e: IOException) {
+          lastError = e
+        }
+        if (attempt < attempts - 1) delay(400L * (attempt + 1))
       }
+      throw lastError ?: IOException("GET $url failed")
     }
 
   suspend fun fetchChannelsCsv(): String = getText("$DATABASE_RAW/channels.csv")
@@ -45,4 +63,7 @@ class IptvOrgClient(private val http: OkHttpClient = OkHttpClient()) {
         .awaitAll()
         .filter { it.second.isNotBlank() }
     }
+
+  // Fallback when the GitHub API listing is rate-limited (403): one deduplicated playlist, no per-channel mirrors.
+  suspend fun fetchCombinedPlaylist(): String = getText(IPTV_COMBINED)
 }
