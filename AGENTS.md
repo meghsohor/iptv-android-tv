@@ -62,13 +62,13 @@ Physical keyboard/mouse input to the emulator's own window does not work on this
 
 ## Git workflow
 
-- **No direct pushes to `main`.** Everything goes through a PR, even solo work.
+- **No direct pushes to `main`.** Everything goes through a PR, even solo work. Enforced since 2026-10-01 by the "Protect main" ruleset (the repo is public): PR required (0 approvals, so solo merges work), no force-push, no deletion, no bypass.
 - **Commit messages are one line, no body.** The repo squash-merges with `COMMIT_MESSAGES` and `release.yml` publishes releases without notes, so GitHub shows the merge commit's message — every commit message in the PR, concatenated — on the release page.
 - Docs and PR descriptions are plain statements of what the app does: no selling tone, and no internal history such as fixed bugs or reviewer finding IDs.
 - A force-push while a Copilot review is running doesn't cancel it; the review lands on the old commits.
 - Version bumps (`versionName` + `versionCode` in `app/build.gradle.kts`) belong in the PR that should trigger a release.
 - The release workflow (`.github/workflows/release.yml`) has a `check-version` gate: it only builds+signs+publishes if `versionName` increased since the last published release. A merge that doesn't bump it is a no-op for releases (no rebuild, no republish) — this is intentional, not a bug.
-- `.github/workflows/ci.yml` builds the debug APK on every PR targeting `main` (check name: `build`) — **informational only**, not a hard merge gate. Classic branch protection *and* the newer Rulesets API both refused with "Upgrade to GitHub Pro or make this repository public" — a private repo on a free personal account can't enforce required status checks via GitHub's own merge-blocking. Don't re-attempt this without one of those two things changing; it's a real account-tier wall, not a config mistake.
+- `.github/workflows/ci.yml` builds the debug APK on every PR targeting `main` (check name: `build`).
 
 ## Known gaps (deliberately deferred, not forgotten)
 
