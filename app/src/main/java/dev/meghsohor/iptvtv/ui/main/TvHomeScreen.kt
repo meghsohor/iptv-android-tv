@@ -515,10 +515,12 @@ private fun SidePanel(
     if (touchMode || !contentReady || openedOn[0] != null) return@LaunchedEffect
     focusRow(focusIndex)
   }
+  // The rows as displayed: an in-list search filters them, and the menu index points into that filtered list.
+  var shownRows by remember { mutableStateOf<List<ChannelEntity>?>(null) }
   // Once a deleted row leaves the list, focus the row that took its place.
-  LaunchedEffect(refocusAfterDelete, state.listChannels) {
+  LaunchedEffect(refocusAfterDelete, shownRows) {
     val (index, deletedId) = refocusAfterDelete ?: return@LaunchedEffect
-    val rows = state.listChannels ?: return@LaunchedEffect
+    val rows = shownRows ?: return@LaunchedEffect
     if (rows.any { it.id == deletedId }) return@LaunchedEffect
     if (rows.isNotEmpty()) {
       focusIndex = index.coerceAtMost(rows.lastIndex)
@@ -621,6 +623,7 @@ private fun SidePanel(
               onChannelMenu = onChannelMenu,
               onSearchFieldFocusChanged = onSearchFieldFocusChanged,
               onBackHandled = onBackHandled,
+              onRowsShown = { shownRows = it },
             )
         }
       }
@@ -838,11 +841,12 @@ private fun ChannelListContent(
   currentChannelId: String?,
   onBack: () -> Unit,
   onSearchQueryChange: (String) -> Unit,
-  onSelectChannel: (String) -> Unit,
+  onSelectChannel: (channelId: String, shownIds: List<String>) -> Unit,
   onToggleBookmark: (ChannelEntity) -> Unit,
   onChannelMenu: (index: Int, ChannelEntity) -> Unit,
   onSearchFieldFocusChanged: (Boolean) -> Unit,
   onBackHandled: () -> Unit,
+  onRowsShown: (List<ChannelEntity>?) -> Unit,
 ) {
   val flagByCountry = remember(countries) { countries.associate { it.code to it.flag } }
   val isSearch = source == ChannelListSource.Search
@@ -866,6 +870,7 @@ private fun ChannelListContent(
       if (searchExpanded && localQuery.isNotBlank()) channels?.filter { it.displayName.contains(localQuery, ignoreCase = true) }
       else channels
     }
+  LaunchedEffect(shown) { onRowsShown(shown) }
 
   Column {
     // A drilled-in list's own header sits flush under the tabs; a header-less list (Favourites, Search) needs the gap itself.
@@ -923,12 +928,12 @@ private fun ChannelListContent(
           playing = channel.id == currentChannelId,
           failed = channel.id in failedIds,
           onLongClick = {
-            if (isSearch) keyboard?.hide()
+            if (isSearch || searchExpanded) keyboard?.hide()
             onChannelMenu(i, channel)
           },
           onClick = {
-            if (isSearch) keyboard?.hide() // tapping a row leaves the keyboard up
-            onSelectChannel(channel.id)
+            if (isSearch || searchExpanded) keyboard?.hide() // tapping a row leaves the keyboard up
+            onSelectChannel(channel.id, rows.map { it.id })
           },
           onToggleBookmark = { onToggleBookmark(channel) },
           // Top-level tabs: nothing above them.
@@ -940,9 +945,9 @@ private fun ChannelListContent(
 }
 
 /**
- * A drilled-in list's header: a flat band with a top and bottom hairline, so it reads as fixed and separate
- * from the pinned tabs above and the list below rather than as another row. Clicking it goes back; when the
- * list is long enough, the trailing icon expands an in-list search scoped to this list (✕ collapses it).
+ * A drilled-in list's header: a flat band with a bottom hairline, the middle of the panel's three layer tones, so
+ * it reads as a section between the tabs and the list rather than as another row. Clicking it goes back; when the
+ * list is long enough, the trailing icon turns the row into a search field scoped to this list (✕ closes it).
  */
 @Composable
 private fun ListHeader(
@@ -1053,7 +1058,7 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, autoFocu
       .padding(bottom = RowGap)
       .background(MaterialTheme.colorScheme.surfaceVariant, shape)
       .border(if (focused) 2.dp else 1.dp, if (focused) MaterialTheme.colorScheme.primary else LineColor, shape)
-      .padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp)
+      .padding(start = 14.dp)
       .onFocusChanged { // the field inside is the focusable one
         focused = it.hasFocus
         onFocusChanged(it.hasFocus)
@@ -1068,7 +1073,7 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, autoFocu
       }
   ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
-      Box(Modifier.weight(1f)) {
+      Box(Modifier.weight(1f).padding(vertical = 8.dp)) {
         if (value.isEmpty()) Text("Search channels…", color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
         BasicTextField(
           value = value,
@@ -1082,24 +1087,31 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, autoFocu
           modifier = Modifier.fillMaxWidth().focusRequester(fieldFocusRequester),
         )
       }
-      // Slot kept when empty, so the field doesn't change height on the first letter. 28dp keeps the field at its
-      // old 44dp: on a landscape phone with the keyboard up there's no height to spare.
-      Box(Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+      // The tap target is the field's full 44dp height and 48dp wide, with a small glyph. Kept when empty, so the
+      // field doesn't change height on the first letter: on a landscape phone with the keyboard up there's no spare.
+      val clearInteraction = remember { MutableInteractionSource() }
+      val clearFocused by clearInteraction.collectIsFocusedAsState()
+      val clearPressed by clearInteraction.collectIsPressedAsState()
+      Box(
+        Modifier.size(width = 48.dp, height = 44.dp)
+          .then(
+            if (value.isNotEmpty()) {
+              Modifier.clickable(interactionSource = clearInteraction, indication = null, onClickLabel = "Clear search") {
+                onValueChange("")
+                fieldFocusRequester.requestFocus() // keep the keyboard up for the next query
+              }
+            } else {
+              Modifier
+            }
+          ),
+        contentAlignment = Alignment.Center,
+      ) {
         if (value.isNotEmpty()) {
-          val clearInteraction = remember { MutableInteractionSource() }
-          val clearFocused by clearInteraction.collectIsFocusedAsState()
-          val clearPressed by clearInteraction.collectIsPressedAsState()
           Icon(
             MeghIcons.ClearCircle,
             contentDescription = "Clear search",
             tint = if (clearFocused || clearPressed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier =
-              Modifier.fillMaxSize()
-                .clickable(interactionSource = clearInteraction, indication = null) {
-                  onValueChange("")
-                  fieldFocusRequester.requestFocus() // keep the keyboard up for the next query
-                }
-                .padding(4.dp),
+            modifier = Modifier.size(20.dp),
           )
         }
       }

@@ -84,7 +84,8 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
     val playlists =
       runCatching { client.fetchAllPlaylists(client.fetchPlaylistCountryCodes()).ifEmpty { error("no playlists") } }
         .getOrElse { listOf("combined" to client.fetchCombinedPlaylist()) }
-    check(playlists.isNotEmpty()) { "Refresh failed: could not reach iptv-org (no playlists fetched)" }
+        .filter { it.second.isNotBlank() }
+    check(playlists.isNotEmpty()) { "could not reach iptv-org (no playlists fetched)" }
 
     val existingSelections = db.channelDao().allSelectedSources().associate { it.id to it.selectedSourceUrl }
 
@@ -137,6 +138,10 @@ class IptvRepository(private val db: IptvDatabase, private val client: IptvOrgCl
               .mapIndexed { i, r -> CountryEntity(r.getValue("code"), r.getValue("name"), r.getValue("flag"), i) },
         )
       }
+
+    // A 200 with a non-playlist body (captive portal, error page) parses to nothing; writing that would delete
+    // every channel and, by cascade, every favourite. Keep the old catalogue instead.
+    check(built.channels.isNotEmpty()) { "iptv-org returned no usable channels" }
 
     val existingIds = existingSelections.keys
     val newIds = built.channels.map { it.id }.toSet()
