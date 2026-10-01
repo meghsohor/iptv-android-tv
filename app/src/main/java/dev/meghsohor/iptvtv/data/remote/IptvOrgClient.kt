@@ -18,7 +18,7 @@ private const val IPTV_STREAMS_LISTING = "https://api.github.com/repos/iptv-org/
 // Compiled master playlist on GitHub Pages: every stream in one file, no API rate limit. The refresh fallback.
 private const val IPTV_COMBINED = "https://iptv-org.github.io/iptv/index.m3u"
 
-private const val USER_AGENT = "MeghTV (Android; https://github.com/meghsohor/iptv-android-tv)"
+private const val USER_AGENT = "MeghTV (Android; https://github.com/meghsohor/meghtv)"
 private val RETRYABLE_CODES = setOf(429, 500, 502, 503, 504)
 
 class IptvOrgClient(private val http: OkHttpClient = OkHttpClient()) {

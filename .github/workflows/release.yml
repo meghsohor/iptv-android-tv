@@ -82,7 +82,7 @@ jobs:
       - name: Rename signed APK
         id: apk
         run: |
-          DEST="iptv-android-tv-v${{ needs.check-version.outputs.version }}.apk"
+          DEST="MeghTV-v${{ needs.check-version.outputs.version }}.apk"
           cp "${{ steps.sign.outputs.signedReleaseFile }}" "$DEST"
           echo "path=$DEST" >> "$GITHUB_OUTPUT"
 

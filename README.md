@@ -4,7 +4,7 @@
 
 # MeghTV
 
-![Release APK](https://github.com/meghsohor/iptv-android-tv/actions/workflows/release.yml/badge.svg)
+![Release APK](https://github.com/meghsohor/meghtv/actions/workflows/release.yml/badge.svg)
 
 An Android TV and phone app for watching the live TV channels listed by [iptv-org](https://github.com/iptv-org).
 
