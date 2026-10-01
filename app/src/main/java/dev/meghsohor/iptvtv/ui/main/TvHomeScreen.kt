@@ -55,6 +55,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -191,8 +192,8 @@ fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
     }
   }
 
-  // Search freezes it for the whole Search view on touch, only while typing on TV: there nothing but the timer closes the
-  // panel. On touch a focused in-list search box also freezes it, so the field can't auto-hide out from under typing.
+  // Search freezes it for the whole Search view on touch, but only while typing on TV, where nothing but the timer closes
+  // the panel. On touch a focused in-list search box also freezes it, so the field can't auto-hide out from under typing.
   val refreshInProgress = state.refreshing || state.refreshMessage != null
   val searching = if (touchMode) isSearch(state.panel) || searchFieldFocused else searchFieldFocused
   // Nothing to watch: on touch unless something plays; on TV only before the first pick, since there
@@ -860,8 +861,6 @@ private fun ChannelListContent(
   val searchable = (source is ChannelListSource.Category || source is ChannelListSource.Country) && (channels?.size ?: 0) > InListSearchThreshold
   // A refresh can shrink a list below the threshold: don't leave the field stuck open.
   LaunchedEffect(searchable) { if (!searchable) { searchExpanded = false; localQuery = "" } }
-  // Collapsing disposes the field: reset the panel's focus flag here instead of relying on the gone field to report it.
-  LaunchedEffect(searchExpanded) { if (!isSearch && !searchExpanded) onSearchFieldFocusChanged(false) }
   // onBackHandled stamps the shared Back de-dupe, so a doubled press collapses the search without also closing the panel.
   BackHandler(enabled = searchExpanded) { onBackHandled(); searchExpanded = false; localQuery = "" }
 
@@ -1050,6 +1049,10 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, autoFocu
   val fieldFocusRequester = remember { FocusRequester() }
   // Touch: straight to the keyboard, unless there are earlier results it would cover.
   LaunchedEffect(Unit) { if (autoFocus && value.isBlank()) fieldFocusRequester.requestFocus() }
+  // A field removed while focused (search collapsed, tab switched, panel closed) can't report the loss itself;
+  // left set, the flag would keep the panel from ever auto-hiding.
+  val currentOnFocusChanged by rememberUpdatedState(onFocusChanged)
+  DisposableEffect(Unit) { onDispose { currentOnFocusChanged(false) } }
 
   var focused by remember { mutableStateOf(false) }
   val shape = RoundedCornerShape(RowRadius)
