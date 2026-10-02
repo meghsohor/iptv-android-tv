@@ -1,4 +1,4 @@
-package dev.meghsohor.iptvtv.ui.main
+package dev.meghsohor.meghtv.ui.main
 
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
@@ -111,18 +111,18 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import dev.meghsohor.iptvtv.R
-import dev.meghsohor.iptvtv.data.IptvRepository
-import dev.meghsohor.iptvtv.data.db.CategoryEntity
-import dev.meghsohor.iptvtv.data.db.ChannelEntity
-import dev.meghsohor.iptvtv.data.db.CountryEntity
-import dev.meghsohor.iptvtv.theme.MeghBackground
-import dev.meghsohor.iptvtv.theme.MeghLive
-import dev.meghsohor.iptvtv.theme.MeghSurface
-import dev.meghsohor.iptvtv.theme.MeghSurfaceVariant
-import dev.meghsohor.iptvtv.ui.MeghIcons
-import dev.meghsohor.iptvtv.ui.player.PlayerCommand
-import dev.meghsohor.iptvtv.ui.player.VideoPlayer
+import dev.meghsohor.meghtv.R
+import dev.meghsohor.meghtv.data.MeghTVRepository
+import dev.meghsohor.meghtv.data.db.CategoryEntity
+import dev.meghsohor.meghtv.data.db.ChannelEntity
+import dev.meghsohor.meghtv.data.db.CountryEntity
+import dev.meghsohor.meghtv.theme.MeghBackground
+import dev.meghsohor.meghtv.theme.MeghLive
+import dev.meghsohor.meghtv.theme.MeghSurface
+import dev.meghsohor.meghtv.theme.MeghSurfaceVariant
+import dev.meghsohor.meghtv.ui.MeghIcons
+import dev.meghsohor.meghtv.ui.player.PlayerCommand
+import dev.meghsohor.meghtv.ui.player.VideoPlayer
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.first
@@ -140,7 +140,7 @@ private val PanelNavigationKeys =
 private val CompactPanelHeight = 480.dp
 
 @Composable
-fun TvHomeScreen(repository: IptvRepository, modifier: Modifier = Modifier) {
+fun TvHomeScreen(repository: MeghTVRepository, modifier: Modifier = Modifier) {
   val viewModel: TvHomeViewModel = viewModel { TvHomeViewModel(repository) }
   val state by viewModel.uiState.collectAsStateWithLifecycle()
   val touchMode = LocalInputModeManager.current.inputMode == InputMode.Touch

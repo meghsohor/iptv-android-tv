@@ -1,4 +1,4 @@
-package dev.meghsohor.iptvtv
+package dev.meghsohor.meghtv
 
 import android.graphics.Color
 import android.os.Bundle
@@ -12,13 +12,13 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import dev.meghsohor.iptvtv.data.IptvRepository
-import dev.meghsohor.iptvtv.data.db.IptvDatabase
-import dev.meghsohor.iptvtv.theme.IPTVAndroidTVTheme
+import dev.meghsohor.meghtv.data.MeghTVRepository
+import dev.meghsohor.meghtv.data.db.MeghTVDatabase
+import dev.meghsohor.meghtv.theme.MeghTVTheme
 
 class MainActivity : ComponentActivity() {
 
-  private val repository: IptvRepository by lazy { IptvRepository(IptvDatabase.getInstance(applicationContext)) }
+  private val repository: MeghTVRepository by lazy { MeghTVRepository(MeghTVDatabase.getInstance(applicationContext)) }
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -30,7 +30,7 @@ class MainActivity : ComponentActivity() {
     )
     hideStatusBar()
     setContent {
-      IPTVAndroidTVTheme {
+      MeghTVTheme {
         // Not a Surface: its fill would repaint the navy the window background already draws.
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) { MainNavigation(repository) }
       }

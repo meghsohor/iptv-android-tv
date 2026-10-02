@@ -1,4 +1,4 @@
-package dev.meghsohor.iptvtv.theme
+package dev.meghsohor.meghtv.theme
 
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
@@ -22,4 +22,4 @@ private val MeghTVColorScheme =
     onSurfaceVariant = MeghOnSurfaceMuted,
   )
 
-@Composable fun IPTVAndroidTVTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme = MeghTVColorScheme, typography = Typography, content = content)
+@Composable fun MeghTVTheme(content: @Composable () -> Unit) = MaterialTheme(colorScheme = MeghTVColorScheme, typography = Typography, content = content)

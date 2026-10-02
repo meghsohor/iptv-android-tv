@@ -6,14 +6,14 @@ plugins {
 }
 
 android {
-    namespace = "dev.meghsohor.iptvtv"
+    namespace = "dev.meghsohor.meghtv"
     compileSdk = 36
     defaultConfig {
-        applicationId = "dev.meghsohor.iptvtv"
+        applicationId = "dev.meghsohor.meghtv"
         minSdk = 23
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 1
+        versionName = "1.0.0"
     }
 
     buildTypes {

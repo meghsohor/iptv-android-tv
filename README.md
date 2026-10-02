@@ -4,9 +4,13 @@
 
 # MeghTV
 
-![Release APK](https://github.com/meghsohor/iptv-android-tv/actions/workflows/release.yml/badge.svg)
+![Release APK](https://github.com/meghsohor/meghtv/actions/workflows/release.yml/badge.svg)
 
 An Android TV and phone app for watching the live TV channels listed by [iptv-org](https://github.com/iptv-org).
+
+MeghTV is free to use and has no ads. If you find it useful, you can support its development to help keep it that way.
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Z5Z8281UOM)
 
 ## Features
 
@@ -36,3 +40,7 @@ This needs the release keystore + its passwords available locally (kept outside 
 ## Releasing
 
 Bump `versionName` and `versionCode` in `app/build.gradle.kts` in the PR. On merge, a signed APK is published as a GitHub Release, but only if `versionName` increased.
+
+## License
+
+The source is available under the [PolyForm Strict License 1.0.0](LICENSE.md): you may read, build and run it for non-commercial purposes, but not distribute it or make modified versions. The MeghTV name and logo are not covered by the license.

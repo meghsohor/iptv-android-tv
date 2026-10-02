@@ -1,4 +1,4 @@
-package dev.meghsohor.iptvtv.theme
+package dev.meghsohor.meghtv.theme
 
 import androidx.compose.ui.graphics.Color
 

@@ -1,11 +1,11 @@
-package dev.meghsohor.iptvtv.ui.main
+package dev.meghsohor.meghtv.ui.main
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import dev.meghsohor.iptvtv.data.IptvRepository
-import dev.meghsohor.iptvtv.data.db.CategoryEntity
-import dev.meghsohor.iptvtv.data.db.ChannelEntity
-import dev.meghsohor.iptvtv.data.db.CountryEntity
+import dev.meghsohor.meghtv.data.MeghTVRepository
+import dev.meghsohor.meghtv.data.db.CategoryEntity
+import dev.meghsohor.meghtv.data.db.ChannelEntity
+import dev.meghsohor.meghtv.data.db.CountryEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
@@ -35,7 +35,7 @@ data class TvHomeUiState(
   val refreshMessage: String? = null,
 )
 
-class TvHomeViewModel(private val repository: IptvRepository) : ViewModel() {
+class TvHomeViewModel(private val repository: MeghTVRepository) : ViewModel() {
 
   private val panel = MutableStateFlow<PanelState>(PanelState.CategoriesMenu)
   private val currentChannelId = MutableStateFlow<String?>(null)

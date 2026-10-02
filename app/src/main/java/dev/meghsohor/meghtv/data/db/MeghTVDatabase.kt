@@ -1,4 +1,4 @@
-package dev.meghsohor.iptvtv.data.db
+package dev.meghsohor.meghtv.data.db
 
 import android.content.Context
 import androidx.room.Database
@@ -13,7 +13,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
   version = 2,
   exportSchema = false,
 )
-abstract class IptvDatabase : RoomDatabase() {
+abstract class MeghTVDatabase : RoomDatabase() {
   abstract fun categoryDao(): CategoryDao
 
   abstract fun countryDao(): CountryDao
@@ -29,7 +29,7 @@ abstract class IptvDatabase : RoomDatabase() {
   abstract fun deletedChannelDao(): DeletedChannelDao
 
   companion object {
-    @Volatile private var instance: IptvDatabase? = null
+    @Volatile private var instance: MeghTVDatabase? = null
 
     private val Migration1To2 =
       object : Migration(1, 2) {
@@ -39,11 +39,11 @@ abstract class IptvDatabase : RoomDatabase() {
         }
       }
 
-    fun getInstance(context: Context): IptvDatabase =
+    fun getInstance(context: Context): MeghTVDatabase =
       instance
         ?: synchronized(this) {
           instance
-            ?: Room.databaseBuilder(context.applicationContext, IptvDatabase::class.java, "iptv.db").addMigrations(Migration1To2).build().also {
+            ?: Room.databaseBuilder(context.applicationContext, MeghTVDatabase::class.java, "meghtv.db").addMigrations(Migration1To2).build().also {
               instance = it
             }
         }

@@ -1,4 +1,4 @@
-package dev.meghsohor.iptvtv.ui.player
+package dev.meghsohor.meghtv.ui.player
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -91,10 +91,10 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.R as Media3R
-import dev.meghsohor.iptvtv.theme.MeghBackground
-import dev.meghsohor.iptvtv.theme.MeghCyan
-import dev.meghsohor.iptvtv.theme.MeghOnSurfaceMuted
-import dev.meghsohor.iptvtv.ui.MeghIcons
+import dev.meghsohor.meghtv.theme.MeghBackground
+import dev.meghsohor.meghtv.theme.MeghCyan
+import dev.meghsohor.meghtv.theme.MeghOnSurfaceMuted
+import dev.meghsohor.meghtv.ui.MeghIcons
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 
