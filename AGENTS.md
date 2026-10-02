@@ -55,20 +55,22 @@ Physical keyboard/mouse input to the emulator's own window does not work on this
 ## Release signing
 
 - Keystore + passwords are deliberately kept **outside this repo**, at `~/Shuvo/Documents/meghtv-signing/` (`release.keystore`, key alias `meghtv-release`, `passwords.txt`). Generated 2026-10-01 (RSA 4096, `OU=MeghTV`, valid to 2054); it becomes the Play upload key. PKCS12, so the key password equals the store password. The old app's key is archived at `~/Shuvo/Documents/iptv-android-tv-signing/` and isn't used. Never commit a keystore or its passwords.
-- Same keystore is base64-encoded into the `ANDROID_KEYSTORE_BASE64` GitHub Actions secret (plus `ANDROID_KEY_ALIAS`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_PASSWORD`) for CI signing, and referenced by path for local signing via `scripts/build-local-release.sh`.
+- Same keystore is base64-encoded into the `ANDROID_KEYSTORE_BASE64` secret (plus `ANDROID_KEY_ALIAS`, `ANDROID_KEYSTORE_PASSWORD`) of the GitHub `release` **environment**, not repo-level secrets: only `main` may deploy to it, so a workflow run from any other branch can't read the key. `release.yml` signs with the SDK's own `zipalign`/`apksigner` rather than a third-party action, and the build before it runs without Gradle or Kotlin daemons, so no third-party code is still running while the key is on disk; keep both. Local signing reads the keystore by path via `scripts/build-local-release.sh`.
+- Third-party actions (`android-actions/setup-android`, `softprops/action-gh-release`) are pinned to commit SHAs, since they run in the job that holds the key. GitHub's own `actions/*` stay on major tags. To bump one, resolve the new release tag to its SHA and keep the `# vX.Y.Z` comment.
 - `scripts/build-local-release.sh` uses `sed` (not `grep -P`) to pull `versionName` out of `build.gradle.kts`, because macOS ships BSD `grep`/`sort` (no `-P`, no `-V`) — the CI workflow runs on `ubuntu-latest` (GNU tools) and can use `grep -P`/`sort -V` freely, but local scripts on this Mac cannot.
-- `r0adkll/sign-android-release`'s own default build-tools version (29.0.3) isn't reliably present on GitHub-hosted runners — the workflow explicitly installs and pins `build-tools;34.0.0` via `BUILD_TOOLS_VERSION` env.
+- The release job installs `build-tools;34.0.0` explicitly and calls its binaries by that path; change both together.
 - OkHttp is pinned to `4.12.0`, not 5.x — OkHttp 5's `-android` variant declares a `compileSdk 37` floor that our AGP version doesn't support yet. Don't bump it without checking that constraint again.
 
 ## Git workflow
 
-- **No direct pushes to `main`.** Everything goes through a PR, even solo work. Enforced since 2026-10-01 by the "Protect main" ruleset (the repo is public): PR required (0 approvals, so solo merges work), no force-push, no deletion, no bypass.
+- **No direct pushes to `main`.** Everything goes through a PR, even solo work. Enforced since 2026-10-01 by the "Protect main" ruleset (the repo is public): PR required (0 approvals, so solo merges work), squash merge only, the CI `build` check must pass, no force-push, no deletion, no bypass. Merge commits and rebase merges are also off in the repo settings. A second ruleset, "Protect release tags", stops `v*` tags from being moved or deleted (creating them is allowed), so removing a bad release's tag means disabling that ruleset first.
 - **Commit messages are one line, no body.** The repo squash-merges with `COMMIT_MESSAGES` and `release.yml` publishes releases without notes, so GitHub shows the merge commit's message — every commit message in the PR, concatenated — on the release page.
 - Docs and PR descriptions are plain statements of what the app does: no selling tone, and no internal history such as fixed bugs or reviewer finding IDs.
 - A force-push while a Copilot review is running doesn't cancel it; the review lands on the old commits.
 - Version bumps (`versionName` + `versionCode` in `app/build.gradle.kts`) belong in the PR that should trigger a release.
 - The release workflow (`.github/workflows/release.yml`) has a `check-version` gate: it only builds+signs+publishes if `versionName` increased since the last published release. A merge that doesn't bump it is a no-op for releases (no rebuild, no republish) — this is intentional, not a bug.
-- `.github/workflows/ci.yml` builds the debug APK on every PR targeting `main` (check name: `build`).
+- `.github/workflows/ci.yml` builds the debug APK on every PR targeting `main` (check name: `build`, required by the ruleset; renaming the job breaks merging until the ruleset is updated).
+- Secret scanning and push protection are on: a push containing a recognised key or token is rejected.
 
 ## Known gaps (deliberately deferred, not forgotten)
 
