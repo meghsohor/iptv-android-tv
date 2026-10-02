@@ -36,3 +36,7 @@ This needs the release keystore + its passwords available locally (kept outside 
 ## Releasing
 
 Bump `versionName` and `versionCode` in `app/build.gradle.kts` in the PR. On merge, a signed APK is published as a GitHub Release, but only if `versionName` increased.
+
+## License
+
+The source is available under the [PolyForm Strict License 1.0.0](LICENSE.md): you may read, build and run it for non-commercial purposes, but not distribute it or make modified versions. The MeghTV name and logo are not covered by the license.
