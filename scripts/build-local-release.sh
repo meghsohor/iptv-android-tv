@@ -50,6 +50,7 @@ echo "Signing..."
   --ks "$KEYSTORE" \
   --ks-pass "pass:$STORE_PW" \
   --ks-key-alias "$KEY_ALIAS" \
+  --v4-signing-enabled false \
   --out "$OUTPUT" \
   "$TMP_ALIGNED"
 
