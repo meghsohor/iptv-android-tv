@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.dp
 // The solid ones are filled and stroked in one colour, which rounds their corners.
 object MeghIcons {
   val ChevronLeft = line("ChevronLeft", "M15,18l-6,-6 6,-6")
+  val ChevronRight = line("ChevronRight", "M9,18l6,-6 -6,-6")
   val ArrowBack = line("ArrowBack", "M12,19l-7,-7 7,-7", "M19,12H5")
   val Refresh =
     line(
