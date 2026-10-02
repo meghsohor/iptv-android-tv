@@ -6,7 +6,7 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   check-version:
@@ -25,7 +25,8 @@ jobs:
           CURRENT=$(sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' app/build.gradle.kts | head -1)
           echo "version=$CURRENT" >> "$GITHUB_OUTPUT"
 
-          LATEST_TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || true)
+          # No fallback: an API error must fail the run, not read as "no releases yet" and rebuild one.
+          LATEST_TAG=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 --json tagName -q '.[0].tagName')
           LATEST="${LATEST_TAG#v}"
 
           if [[ -z "$LATEST" ]]; then
@@ -49,6 +50,10 @@ jobs:
     needs: check-version
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # The signing secrets live in this environment, which only main can deploy to.
+    environment: release
     steps:
       - uses: actions/checkout@v7
 
@@ -59,35 +64,36 @@ jobs:
           java-version: "17"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
+        uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
         with:
           packages: "platform-tools build-tools;34.0.0"
 
+      # No daemons left running, so no build plugin is still alive while the key is on disk.
       - name: Build unsigned release APK
-        run: ./gradlew assembleRelease
+        run: ./gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process assembleRelease
 
+      # Signed with the SDK's own tools, so no third-party action sees the key.
       - name: Sign release APK
-        id: sign
-        uses: r0adkll/sign-android-release@v1
-        with:
-          releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          alias: ${{ secrets.ANDROID_KEY_ALIAS }}
-          keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        env:
-          # The action's default (29.0.3) isn't reliably on the runner image.
-          BUILD_TOOLS_VERSION: "34.0.0"
-
-      - name: Rename signed APK
         id: apk
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          VERSION: ${{ needs.check-version.outputs.version }}
         run: |
-          DEST="MeghTV-v${{ needs.check-version.outputs.version }}.apk"
-          cp "${{ steps.sign.outputs.signedReleaseFile }}" "$DEST"
+          BUILD_TOOLS="$ANDROID_HOME/build-tools/34.0.0"
+          KEYSTORE="$RUNNER_TEMP/release.keystore"
+          ALIGNED="$RUNNER_TEMP/aligned.apk"
+          DEST="MeghTV-v$VERSION.apk"
+          trap 'rm -f "$KEYSTORE"' EXIT
+          printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+          "$BUILD_TOOLS/zipalign" -f -p 4 app/build/outputs/apk/release/app-release-unsigned.apk "$ALIGNED"
+          "$BUILD_TOOLS/apksigner" sign --ks "$KEYSTORE" --ks-pass env:KEYSTORE_PASSWORD --ks-key-alias "$KEY_ALIAS" --v4-signing-enabled false --out "$DEST" "$ALIGNED"
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$DEST" | grep -E "DN|SHA-256"
           echo "path=$DEST" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
           name: v${{ needs.check-version.outputs.version }}
