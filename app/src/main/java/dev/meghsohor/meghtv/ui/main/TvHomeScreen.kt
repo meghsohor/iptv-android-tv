@@ -121,6 +121,7 @@ import dev.meghsohor.meghtv.theme.MeghLive
 import dev.meghsohor.meghtv.theme.MeghSurface
 import dev.meghsohor.meghtv.theme.MeghSurfaceVariant
 import dev.meghsohor.meghtv.ui.MeghIcons
+import dev.meghsohor.meghtv.ui.player.LiveState
 import dev.meghsohor.meghtv.ui.player.PlayerCommand
 import dev.meghsohor.meghtv.ui.player.VideoPlayer
 import kotlinx.coroutines.delay
@@ -131,6 +132,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 private val PanelWidth = 360.dp
 private val PanelHandleWidth = 44.dp
 private const val PanelAnimMs = 220
+private const val GoLiveRepeatWindowMs = 1_000L
 private const val PanelAutoHideDelayMs = 7000L
 private const val SameBackPressWindowMs = 200L
 private val PanelNavigationKeys =
@@ -157,6 +159,7 @@ fun TvHomeScreen(repository: MeghTVRepository, modifier: Modifier = Modifier) {
   var menuChannel by remember { mutableStateOf<IndexedValue<ChannelEntity>?>(null) }
   var refocusAfterDelete by remember { mutableStateOf<IndexedValue<String>?>(null) }
   var playerControlsVisible by remember { mutableStateOf(false) }
+  var liveState by remember { mutableStateOf(LiveState()) }
   val rootFocusRequester = remember { FocusRequester() }
   val panelEntryFocusRequester = remember { FocusRequester() }
   // Hoisted per view, so a list is where it was left after the panel closes or a level goes back.
@@ -166,6 +169,13 @@ fun TvHomeScreen(repository: MeghTVRepository, modifier: Modifier = Modifier) {
   val openedFrom = remember { mutableMapOf<PanelState, Int>() }
   val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
   val playerCommands = remember { MutableSharedFlow<PlayerCommand>(extraBufferCapacity = 1) }
+  // A held Right or fast-forward repeats after the flag clears: those repeats are swallowed, not passed on to open the panel.
+  val wentLiveAt = remember { longArrayOf(0L) }
+  fun goLive(): Boolean {
+    wentLiveAt[0] = SystemClock.uptimeMillis()
+    return playerCommands.tryEmit(PlayerCommand.GoLive)
+  }
+  fun goLiveRepeat(repeated: Boolean) = repeated && SystemClock.uptimeMillis() - wentLiveAt[0] < GoLiveRepeatWindowMs
   val activity = LocalActivity.current
   var rootHasFocus by remember { mutableStateOf(false) }
   var rootSelfFocused by remember { mutableStateOf(false) }
@@ -269,6 +279,11 @@ fun TvHomeScreen(repository: MeghTVRepository, modifier: Modifier = Modifier) {
           Key.MediaPlayPause -> repeated || playerCommands.tryEmit(PlayerCommand.TogglePlayPause)
           Key.MediaPlay -> playerCommands.tryEmit(PlayerCommand.Play)
           Key.MediaPause -> playerCommands.tryEmit(PlayerCommand.Pause)
+          Key.MediaFastForward if goLiveRepeat(repeated) -> true
+          Key.MediaFastForward -> liveState.behind && goLive()
+          // With the chip up (controls showing, behind live), Right goes live; else it opens the panel.
+          Key.DirectionRight if !panelOpen && goLiveRepeat(repeated) -> true
+          Key.DirectionRight if !panelOpen && rootSelfFocused && playerControlsVisible && liveState.goLiveOffered && !repeated -> goLive()
           // Panel closed: OK shows the controls, then plays/pauses, for remotes without media keys.
           Key.DirectionCenter, Key.Enter, Key.NumPadEnter ->
             when {
@@ -308,6 +323,7 @@ fun TvHomeScreen(repository: MeghTVRepository, modifier: Modifier = Modifier) {
           }
         },
         onControlsVisibilityChange = { playerControlsVisible = it },
+        onLiveStateChange = { liveState = it },
         onPlaybackActiveChange = { playbackActive = it },
         onAllSourcesFailed = { viewModel.onPlaybackFailed(currentChannel.id) },
         onPlaying = { viewModel.onPlaybackWorked(currentChannel.id) },
@@ -322,7 +338,7 @@ fun TvHomeScreen(repository: MeghTVRepository, modifier: Modifier = Modifier) {
         modifier = Modifier.fillMaxSize(),
       )
       if (panelOpen || playerControlsVisible) {
-        NowPlayingBadge(channel = currentChannel, modifier = Modifier.align(Alignment.TopStart).padding(16.dp))
+        NowPlayingBadge(channel = currentChannel, live = !liveState.behind, modifier = Modifier.align(Alignment.TopStart).padding(16.dp))
       }
     } else {
       Image(
@@ -427,20 +443,22 @@ fun TvHomeScreen(repository: MeghTVRepository, modifier: Modifier = Modifier) {
   }
 }
 
+/** [live] false (paused, or playing on behind the live edge) greys the LIVE tag. */
 @Composable
-private fun NowPlayingBadge(channel: ChannelEntity, modifier: Modifier = Modifier) {
+private fun NowPlayingBadge(channel: ChannelEntity, live: Boolean, modifier: Modifier = Modifier) {
+  val tagColor = if (live) MeghLive else MaterialTheme.colorScheme.onSurfaceVariant
   Row(
     modifier.widthIn(max = 420.dp).clip(RoundedCornerShape(8.dp)).background(MeghBackground.copy(alpha = 0.8f)).padding(horizontal = 12.dp, vertical = 8.dp),
     verticalAlignment = Alignment.CenterVertically,
     horizontalArrangement = Arrangement.spacedBy(10.dp),
   ) {
     Row(
-      Modifier.clip(RoundedCornerShape(4.dp)).background(MeghLive.copy(alpha = 0.18f)).padding(horizontal = 8.dp, vertical = 3.dp),
+      Modifier.clip(RoundedCornerShape(4.dp)).background(tagColor.copy(alpha = 0.18f)).padding(horizontal = 8.dp, vertical = 3.dp),
       verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-      Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(MeghLive))
-      Text("LIVE", color = MeghLive, style = MaterialTheme.typography.labelLarge)
+      Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(tagColor))
+      Text("LIVE", color = tagColor, style = MaterialTheme.typography.labelLarge)
     }
     Text(
       channel.displayName,
