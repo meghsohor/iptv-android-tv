@@ -39,7 +39,7 @@ This needs the release keystore + its passwords available locally (kept outside 
 
 ## Releasing
 
-Bump `versionName` and `versionCode` in `app/build.gradle.kts` in the PR. On merge, a signed APK is published as a GitHub Release, but only if `versionName` increased.
+Bump `versionName` and `versionCode` in `app/build.gradle.kts` and rewrite `RELEASE_NOTES.md` for the new version in the same PR (CI fails a version bump without it). On merge, a signed APK is published as a GitHub Release with those notes, but only if `versionName` increased.
 
 ## License
 
