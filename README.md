@@ -2,6 +2,10 @@
   <img src="app/src/main/res/drawable-nodpi/tv_banner.webp" alt="MeghTV" width="720">
 </p>
 
+| Android TV | Phone |
+| --- | --- |
+| <img src="docs/screenshots/tv.jpg" alt="MeghTV on Android TV: the menu open on the News category"> | <img src="docs/screenshots/phone.jpg" alt="MeghTV on a phone in landscape: the menu open on the News category"> |
+
 # MeghTV
 
 ![Release APK](https://github.com/meghsohor/meghtv/actions/workflows/release.yml/badge.svg)
@@ -18,6 +22,7 @@ MeghTV is free to use and has no ads. If you find it useful, you can support its
 - Channels browsed by category or country, with search and favourites stored on the device.
 - Channels that failed to play are marked. Any channel can be deleted; a refresh brings deleted channels back.
 - Plays HLS, DASH, SmoothStreaming and RTSP streams, and tries a channel's other stream URLs when one fails.
+- A paused channel resumes where it was paused; "Go live" (or Right / fast-forward on a TV remote) jumps back to the live picture.
 - "Refresh Channels" updates the channel list from iptv-org.
 
 ## Building locally

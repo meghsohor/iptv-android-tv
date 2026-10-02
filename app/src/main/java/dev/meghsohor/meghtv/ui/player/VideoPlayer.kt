@@ -9,6 +9,7 @@ import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.LayerDrawable
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.SystemClock
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.MotionEvent
@@ -33,10 +34,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.systemGestureExclusion
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -50,6 +51,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -76,6 +78,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -93,8 +96,10 @@ import androidx.media3.ui.PlayerView
 import androidx.media3.ui.R as Media3R
 import dev.meghsohor.meghtv.theme.MeghBackground
 import dev.meghsohor.meghtv.theme.MeghCyan
+import dev.meghsohor.meghtv.theme.MeghLive
 import dev.meghsohor.meghtv.theme.MeghOnSurfaceMuted
 import dev.meghsohor.meghtv.ui.MeghIcons
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 
@@ -103,7 +108,17 @@ private const val ControlsAutoHideMs = 5000
 /** Live-edge rejoins before a stream counts as failed. */
 private const val MaxLiveRejoins = 3
 
-enum class PlayerCommand { TogglePlayPause, Play, Pause, ShowControls, HideControls }
+private const val AudioPrefsName = "player_audio"
+private const val MutedKey = "muted"
+private const val VolumeKey = "volume"
+
+/** Behind live by less than this after a pause isn't worth a Go live button. */
+private const val GoLiveMinBehindMs = 3_000L
+
+enum class PlayerCommand { TogglePlayPause, Play, Pause, ShowControls, HideControls, GoLive }
+
+/** [behind]: paused, or playing on behind the live edge. [goLiveOffered]: the Go live chip is up. */
+data class LiveState(val behind: Boolean = false, val goLiveOffered: Boolean = false)
 
 /**
  * Plays [streamUrls] in order, moving on when one fails; the error screen shows once all have failed.
@@ -123,6 +138,7 @@ fun VideoPlayer(
   onPlaying: () -> Unit,
   onDeleteChannel: () -> Unit,
   modifier: Modifier = Modifier,
+  onLiveStateChange: (LiveState) -> Unit = {},
   overlayEndPadding: Dp = 0.dp,
   controlsEdgeInset: Dp = 0.dp,
   playerCommands: Flow<PlayerCommand> = emptyFlow(),
@@ -153,11 +169,13 @@ fun VideoPlayer(
   var buffering by remember { mutableStateOf(false) }
   var controlsVisible by remember { mutableStateOf(false) }
   var playerView by remember { mutableStateOf<PlayerView?>(null) }
-  var muted by remember { mutableStateOf(false) }
+  // Kept across channel switches and app restarts.
+  val audioPrefs = remember { context.getSharedPreferences(AudioPrefsName, Context.MODE_PRIVATE) }
+  var muted by remember { mutableStateOf(audioPrefs.getBoolean(MutedKey, false)) }
   var playing by remember { mutableStateOf(true) }
   // Replays the centre animation.
   var pulse by remember { mutableIntStateOf(0) }
-  var volume by remember { mutableFloatStateOf(1f) }
+  var volume by remember { mutableFloatStateOf(audioPrefs.getFloat(VolumeKey, 1f)) }
   val currentStreamUrls by rememberUpdatedState(streamUrls)
   val currentOnTap by rememberUpdatedState(onTap)
   val currentControlsAllowed by rememberUpdatedState(controlsAllowed)
@@ -165,6 +183,28 @@ fun VideoPlayer(
   val currentOnAllSourcesFailed by rememberUpdatedState(onAllSourcesFailed)
   val currentOnPlaying by rememberUpdatedState(onPlaying)
   val liveRejoins = remember { intArrayOf(0) }
+  // A resumed live stream plays on from where it was paused. Most streams carry no wall clock, so how far behind it is
+  // is the time spent paused (or held back by another app's audio) since the last join with the live edge. Where the
+  // stream does carry one, the measured offset replaces it: the player then also creeps back to live by itself.
+  var behindLiveMs by remember { mutableLongStateOf(0L) }
+  val pausedSince = remember { longArrayOf(0L) }
+  val edgeOffsetMs = remember { longArrayOf(C.TIME_UNSET) }
+  var isLive by remember { mutableStateOf(false) }
+  fun heldBack() = !player.playWhenReady || player.playbackSuppressionReason != Player.PLAYBACK_SUPPRESSION_REASON_NONE
+  fun joinedLiveEdge() {
+    behindLiveMs = 0L
+    pausedSince[0] = if (heldBack()) SystemClock.elapsedRealtime() else 0L
+    edgeOffsetMs[0] = C.TIME_UNSET
+  }
+  fun updateHeldBack() {
+    val now = SystemClock.elapsedRealtime()
+    if (heldBack()) {
+      if (pausedSince[0] == 0L) pausedSince[0] = now
+    } else if (pausedSince[0] > 0L) {
+      behindLiveMs += now - pausedSince[0]
+      pausedSince[0] = 0L
+    }
+  }
 
   // Each new attempt relaunches the load effect; the final failure doesn't, so nothing reloads behind the error screen.
   fun onSourceFailed(error: PlaybackException) {
@@ -191,6 +231,7 @@ fun VideoPlayer(
             liveRejoins[0]++
             player.seekToDefaultPosition()
             player.prepare()
+            joinedLiveEdge()
             return
           }
           onSourceFailed(error)
@@ -199,11 +240,15 @@ fun VideoPlayer(
         // Paused: the controls stay up over a dimmed picture.
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
           playing = playWhenReady
+          updateHeldBack()
           val view = playerView ?: return
           view.findViewById<View>(Media3R.id.exo_controls_background)?.background = edgeScrim(view.resources.displayMetrics.density, dimmed = !playWhenReady)
           view.controllerShowTimeoutMs = if (playWhenReady) ControlsAutoHideMs else 0
           if (view.isControllerFullyVisible) view.showController() // re-arm with the new timeout
         }
+
+        // Another app's audio (a call, the Assistant) holds playback back without a pause.
+        override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) = updateHeldBack()
 
         // Most streams have no captions, and Media3 would show a disabled CC button.
         override fun onTracksChanged(tracks: Tracks) {
@@ -214,6 +259,9 @@ fun VideoPlayer(
           val state = player.playbackState
           keepScreenOn = player.playWhenReady && state != Player.STATE_IDLE && state != Player.STATE_ENDED
           buffering = state == Player.STATE_BUFFERING
+          isLive = player.isCurrentMediaItemLive
+          // The first reading at the live edge, for streams that report their offset.
+          if (state == Player.STATE_READY && behindLiveMs == 0L && edgeOffsetMs[0] == C.TIME_UNSET) edgeOffsetMs[0] = player.currentLiveOffset
           if (state == Player.STATE_READY) liveRejoins[0] = 0
         }
 
@@ -246,6 +294,7 @@ fun VideoPlayer(
           if (player.mediaItemCount > 0 && player.playbackState == Player.STATE_IDLE && playbackError == null) {
             player.seekToDefaultPosition()
             player.prepare()
+            joinedLiveEdge()
           }
         else -> Unit
       }
@@ -258,13 +307,50 @@ fun VideoPlayer(
   val currentOnPlaybackActiveChange by rememberUpdatedState(onPlaybackActiveChange)
   LaunchedEffect(playbackActive) { currentOnPlaybackActiveChange(playbackActive) }
 
-  LaunchedEffect(muted, volume) { player.volume = if (muted) 0f else volume }
+  LaunchedEffect(muted, volume) {
+    player.volume = if (muted) 0f else volume
+    audioPrefs.edit {
+      putBoolean(MutedKey, muted)
+      putFloat(VolumeKey, volume)
+    }
+  }
+
+  // Where the stream reports its offset, follow it while playing behind: the player closes the gap at up to 1.03x.
+  LaunchedEffect(behindLiveMs > 0L && playing) {
+    if (behindLiveMs == 0L || !playing) return@LaunchedEffect
+    while (true) {
+      delay(2_000)
+      val offset = player.currentLiveOffset
+      if (offset == C.TIME_UNSET || edgeOffsetMs[0] == C.TIME_UNSET || pausedSince[0] > 0L) continue
+      behindLiveMs = (offset - edgeOffsetMs[0]).coerceAtLeast(0L).let { if (it < GoLiveMinBehindMs) 0L else it }
+      if (behindLiveMs == 0L) break
+    }
+  }
+
+  val behind = isLive && playbackError == null && (!playing || behindLiveMs >= GoLiveMinBehindMs)
+  // On TV only once playing again: while paused the controls stay up, and Right must still open the panel.
+  val goLiveOffered = behind && (touchControls || playing)
+  val currentOnLiveStateChange by rememberUpdatedState(onLiveStateChange)
+  LaunchedEffect(behind, goLiveOffered) { currentOnLiveStateChange(LiveState(behind, goLiveOffered)) }
+  // Gone with the player: nothing is behind, and no controls are up.
+  DisposableEffect(Unit) {
+    onDispose {
+      currentOnLiveStateChange(LiveState())
+      currentOnControlsVisibilityChange(false)
+    }
+  }
 
   fun setPlaying(play: Boolean) {
     if (player.playWhenReady == play) return
     player.playWhenReady = play
     pulse++
     if (currentControlsAllowed && playbackError == null) playerView?.showController()
+  }
+
+  fun goLive() {
+    player.seekToDefaultPosition()
+    setPlaying(true)
+    joinedLiveEdge()
   }
 
   LaunchedEffect(player, playerCommands) {
@@ -275,6 +361,7 @@ fun VideoPlayer(
         PlayerCommand.Play -> setPlaying(true)
         PlayerCommand.Pause -> setPlaying(false)
         PlayerCommand.TogglePlayPause -> setPlaying(!player.playWhenReady)
+        PlayerCommand.GoLive -> goLive()
       }
     }
   }
@@ -299,6 +386,9 @@ fun VideoPlayer(
     } else {
       // A fresh decoder per stream: a reused one can leave the old channel's larger frame around a smaller new one.
       player.stop()
+      // Every load, a backup source too, starts at the live edge.
+      behindLiveMs = 0L
+      pausedSince[0] = 0L
       // A format with no Media3 module throws here instead of reporting a playback error.
       try {
         player.setMediaItem(MediaItem.Builder().setUri(url).apply { if (attempt.asHls) setMimeType(MimeTypes.APPLICATION_M3U8) }.build())
@@ -378,6 +468,7 @@ fun VideoPlayer(
       ControlsRow(
         playing = playing,
         onTogglePlay = { setPlaying(!player.playWhenReady) },
+        onGoLive = if (goLiveOffered) ::goLive else null,
         touchControls = touchControls,
         muted = muted || volume == 0f,
         volume = volume,
@@ -475,6 +566,7 @@ private fun PlayerView.installTapHandler(onTap: (PlayerView) -> Unit) {
 private fun ControlsRow(
   playing: Boolean,
   onTogglePlay: () -> Unit,
+  onGoLive: (() -> Unit)?,
   touchControls: Boolean,
   muted: Boolean,
   volume: Float,
@@ -507,7 +599,13 @@ private fun ControlsRow(
         modifier = Modifier.size(30.dp),
       )
     }
-    if (!touchControls) return@Row
+    // Last in the row, so it doesn't shift mute and volume when it appears. On TV the Right key (or fast-forward) does
+    // it, so the chip shows that arrow instead of taking focus.
+    val goLiveChip = @Composable { if (onGoLive != null) GoLiveChip(onClick = onGoLive, touchControls = touchControls, modifier = Modifier.padding(start = 12.dp)) }
+    if (!touchControls) {
+      goLiveChip()
+      return@Row
+    }
     Box(
       Modifier.size(48.dp).clip(CircleShape).clickable(onClick = onToggleMute),
       contentAlignment = Alignment.Center,
@@ -536,6 +634,25 @@ private fun ControlsRow(
         )
       },
     )
+    goLiveChip()
+  }
+}
+
+@Composable
+private fun GoLiveChip(onClick: () -> Unit, touchControls: Boolean, modifier: Modifier = Modifier) {
+  Row(
+    modifier
+      .clip(RoundedCornerShape(50))
+      .background(MeghBackground.copy(alpha = 0.7f))
+      .border(1.dp, MeghLive.copy(alpha = 0.6f), RoundedCornerShape(50))
+      .then(if (touchControls) Modifier.clickable(onClickLabel = "Go live", onClick = onClick) else Modifier)
+      .padding(horizontal = 14.dp, vertical = 8.dp),
+    verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    Box(Modifier.size(8.dp).background(MeghLive, CircleShape))
+    Text("Go live", color = Color.White, style = MaterialTheme.typography.labelLarge)
+    if (!touchControls) Icon(MeghIcons.ChevronRight, contentDescription = null, tint = MeghCyan, modifier = Modifier.size(18.dp))
   }
 }
 
