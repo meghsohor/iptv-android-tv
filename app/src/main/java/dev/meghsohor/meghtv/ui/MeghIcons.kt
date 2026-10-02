@@ -31,6 +31,15 @@ object MeghIcons {
   val Pause = solid("Pause", roundRect(6f, 4f, 3f, 16f, 0.5f), roundRect(15f, 4f, 3f, 16f, 0.5f))
   val VolumeUp = line("VolumeUp", SpeakerPath, "M16,9a5,5 0,0 1,0,6", "M19.364,18.364a9,9 0,0 0,0,-12.728")
   val VolumeOff = line("VolumeOff", SpeakerPath, "M22,9l-6,6", "M16,9l6,6")
+  val Coffee =
+    line(
+      "Coffee",
+      "M10,2v2",
+      "M14,2v2",
+      "M6,2v2",
+      "M16,8a1,1 0,0 1,1,1v8a4,4 0,0 1,-4,4H7a4,4 0,0 1,-4,-4V9a1,1 0,0 1,1,-1h14a4,4 0,1 1,0,8h-1",
+    )
+  val Info = line("Info", "M12,2a10,10 0,1 0,0,20a10,10 0,1 0,0,-20z", "M12,16v-4", "M12,8h0.01")
   val Delete =
     line(
       "Delete",
