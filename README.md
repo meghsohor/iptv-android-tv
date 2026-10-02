@@ -8,6 +8,10 @@
 
 An Android TV and phone app for watching the live TV channels listed by [iptv-org](https://github.com/iptv-org).
 
+MeghTV is free to use and has no ads. If you find it useful, you can support its development to help keep it that way.
+
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Z5Z8281UOM)
+
 ## Features
 
 - Runs on Android TV (remote control) and Android phones (touch, landscape).
