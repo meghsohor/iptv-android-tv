@@ -1611,6 +1611,8 @@ private val AppFeatures =
     "Favourites, newest first",
     "Works with a TV remote or by touch",
     "Channel Up/Down on a remote switches channels",
+    "A paused channel resumes where it was paused; Go live jumps back to the live picture",
+    "Remembers mute and volume between channels",
     "Tries a channel's backup streams when one fails, and marks channels that didn't play",
     "Delete channels you don't want; a refresh brings them back",
     "Refresh to get the latest channel list",
