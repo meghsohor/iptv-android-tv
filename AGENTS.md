@@ -76,6 +76,7 @@ Physical keyboard/mouse input to the emulator's own window does not work on this
 ## Known gaps (deliberately deferred, not forgotten)
 
 - No automated tests yet — the original template's tests were deleted because they referenced the placeholder code they replaced.
+- How far a resumed live stream is behind is mostly an estimate: the time spent paused (or held back by another app's audio) since the last join with the live edge, because most iptv streams carry no wall clock. Buffering stalls aren't counted. Streams that do report `currentLiveOffset` use the measured value, since Media3 slowly catches those up by itself. On TV the Go live chip shows only once playback resumes; while paused, Right still opens the panel. Fast-forward goes live at any time.
 - On TV, the player's CC and settings buttons can't be reached with the D-pad: the controller is kept out of the focus chain so that OK and Back behave (see `VideoPlayer.kt`). On a phone they're tappable.
 - Media3 places the settings/CC popup itself. `res/values/dimens.xml` overrides `exo_settings_offset` so it opens above the control row, but horizontally it stays at the right screen edge rather than over the settings button.
 - A channel is marked "not working" unless the device looks offline, and Android can take a while to notice that a Wi-Fi network lost its internet. Channels tried in that window get marked; each mark clears the next time the channel plays.
