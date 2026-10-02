@@ -2,6 +2,10 @@
   <img src="app/src/main/res/drawable-nodpi/tv_banner.webp" alt="MeghTV" width="720">
 </p>
 
+| Android TV | Phone |
+| --- | --- |
+| <img src="docs/screenshots/tv.jpg" alt="MeghTV on Android TV: the menu open on the News category"> | <img src="docs/screenshots/phone.jpg" alt="MeghTV on a phone in landscape: the menu open on the News category"> |
+
 # MeghTV
 
 ![Release APK](https://github.com/meghsohor/meghtv/actions/workflows/release.yml/badge.svg)
