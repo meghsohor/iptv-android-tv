@@ -8,3 +8,22 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+
+  # Minor and patch bumps come grouped; each major arrives as its own PR.
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    ignore:
+      # OkHttp 5 needs compileSdk 37, which our AGP doesn't support yet (see AGENTS.md).
+      - dependency-name: "com.squareup.okhttp3:*"
+        update-types: ["version-update:semver-major"]
+    groups:
+      # The Kotlin plugins and KSP have to move together.
+      kotlin:
+        patterns: ["org.jetbrains.kotlin*", "com.google.devtools.ksp*"]
+      android-build:
+        patterns: ["com.android.*"]
+      libraries:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
