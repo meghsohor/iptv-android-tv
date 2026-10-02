@@ -78,6 +78,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -106,6 +107,10 @@ private const val ControlsAutoHideMs = 5000
 
 /** Live-edge rejoins before a stream counts as failed. */
 private const val MaxLiveRejoins = 3
+
+private const val AudioPrefsName = "player_audio"
+private const val MutedKey = "muted"
+private const val VolumeKey = "volume"
 
 /** Behind live by less than this after a pause isn't worth a Go live button. */
 private const val GoLiveMinBehindMs = 3_000L
@@ -164,11 +169,13 @@ fun VideoPlayer(
   var buffering by remember { mutableStateOf(false) }
   var controlsVisible by remember { mutableStateOf(false) }
   var playerView by remember { mutableStateOf<PlayerView?>(null) }
-  var muted by remember { mutableStateOf(false) }
+  // Kept across channel switches and app restarts.
+  val audioPrefs = remember { context.getSharedPreferences(AudioPrefsName, Context.MODE_PRIVATE) }
+  var muted by remember { mutableStateOf(audioPrefs.getBoolean(MutedKey, false)) }
   var playing by remember { mutableStateOf(true) }
   // Replays the centre animation.
   var pulse by remember { mutableIntStateOf(0) }
-  var volume by remember { mutableFloatStateOf(1f) }
+  var volume by remember { mutableFloatStateOf(audioPrefs.getFloat(VolumeKey, 1f)) }
   val currentStreamUrls by rememberUpdatedState(streamUrls)
   val currentOnTap by rememberUpdatedState(onTap)
   val currentControlsAllowed by rememberUpdatedState(controlsAllowed)
@@ -300,7 +307,13 @@ fun VideoPlayer(
   val currentOnPlaybackActiveChange by rememberUpdatedState(onPlaybackActiveChange)
   LaunchedEffect(playbackActive) { currentOnPlaybackActiveChange(playbackActive) }
 
-  LaunchedEffect(muted, volume) { player.volume = if (muted) 0f else volume }
+  LaunchedEffect(muted, volume) {
+    player.volume = if (muted) 0f else volume
+    audioPrefs.edit {
+      putBoolean(MutedKey, muted)
+      putFloat(VolumeKey, volume)
+    }
+  }
 
   // Where the stream reports its offset, follow it while playing behind: the player closes the gap at up to 1.03x.
   LaunchedEffect(behindLiveMs > 0L && playing) {
