@@ -64,7 +64,8 @@ Physical keyboard/mouse input to the emulator's own window does not work on this
 ## Git workflow
 
 - **No direct pushes to `main`.** Everything goes through a PR, even solo work. Enforced since 2026-10-01 by the "Protect main" ruleset (the repo is public): PR required (0 approvals, so solo merges work), squash merge only, the CI `build` check must pass, no force-push, no deletion, no bypass. Merge commits and rebase merges are also off in the repo settings. A second ruleset, "Protect release tags", stops `v*` tags from being moved or deleted (creating them is allowed), so removing a bad release's tag means disabling that ruleset first.
-- **Commit messages are one line, no body.** The repo squash-merges with `COMMIT_MESSAGES` and `release.yml` publishes releases without notes, so GitHub shows the merge commit's message — every commit message in the PR, concatenated — on the release page.
+- **Commit messages are one line, no body.** The repo squash-merges with `COMMIT_MESSAGES`, so the merge commit's message is every commit message in the PR, concatenated.
+- **Release notes come from `RELEASE_NOTES.md`**, which `release.yml` publishes as the release text. It holds only the upcoming release's notes, written for people installing the app (what's new, install steps, nothing internal); the PR that bumps `versionName` rewrites it, and the CI `build` check fails a version bump that doesn't touch it.
 - Docs and PR descriptions are plain statements of what the app does: no selling tone, and no internal history such as fixed bugs or reviewer finding IDs.
 - A force-push while a Copilot review is running doesn't cancel it; the review lands on the old commits.
 - Version bumps (`versionName` + `versionCode` in `app/build.gradle.kts`) belong in the PR that should trigger a release.

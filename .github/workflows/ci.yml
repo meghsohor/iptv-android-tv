@@ -19,5 +19,18 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@be39fa834029ff78f1a44aa3bb0819b8fc2bd8fd # v4.0.4
 
+      - name: Check release notes were updated with a version bump
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --quiet --depth=1 origin "$BASE_REF"
+          version() { sed -n 's/.*versionName *= *"\([^"]*\)".*/\1/p' | head -1; }
+          BASE=$(git show FETCH_HEAD:app/build.gradle.kts | version)
+          HEAD=$(version < app/build.gradle.kts)
+          if [[ "$BASE" != "$HEAD" ]] && git diff --quiet FETCH_HEAD -- RELEASE_NOTES.md; then
+            echo "::error file=RELEASE_NOTES.md::versionName changed ($BASE -> $HEAD) but RELEASE_NOTES.md didn't."
+            exit 1
+          fi
+
       - name: Build debug APK
         run: ./gradlew assembleDebug
